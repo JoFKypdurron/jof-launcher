@@ -1,0 +1,292 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # The .deb takes its version from the tag while the macOS bundle takes
+      # its version from pubspec.yaml. If those disagree, the in-app updater
+      # compares against the wrong number: it installs the new build, restarts,
+      # still reads the old version, and offers the same update forever.
+      - name: Tag version must match pubspec version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG%-launcher}"
+          PUB="$(grep -E '^version:' pubspec.yaml | head -n1 | awk '{print $2}')"
+          if [ "$TAG" != "$PUB" ]; then
+            echo "::error::Tag version '$TAG' does not match pubspec.yaml version '$PUB'. Bump pubspec.yaml before tagging."
+            exit 1
+          fi
+          echo "Version check OK: $TAG"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev dpkg-dev
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build Linux release
+        run: flutter build linux --release
+
+      - name: Package Linux release
+        run: bash scripts/package-linux.sh
+
+      - name: Package .deb
+        env:
+          MAINTAINER_NAME: ${{ github.repository_owner }}
+          MAINTAINER_EMAIL: ${{ github.repository_owner_id }}+${{ github.repository_owner }}@users.noreply.github.com
+        run: |
+          # Use tag version when running on tags, but strip the optional leading 'v'
+          # and the trailing '-launcher' suffix (e.g. v1.2.3-launcher -> 1.2.3).
+          VERSION="${{ github.ref_name }}"
+          if [[ "$VERSION" == v* ]]; then
+            VERSION="${VERSION#v}"
+            VERSION="${VERSION%-launcher}"
+            export VERSION
+          else
+            unset VERSION
+          fi
+          bash scripts/package-deb.sh
+          ls -la build/deb
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jof-launcher-linux
+          path: jof-launcher-linux.tar.gz
+          retention-days: 5
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jof-launcher-deb
+          path: build/deb/*.deb
+          retention-days: 5
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build macOS release
+        run: flutter build macos --release
+
+      - name: Package macOS release
+        run: bash scripts/package-macos.sh
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jof-launcher-macos
+          path: jof-launcher-macos.dmg
+          retention-days: 5
+
+#  build-windows:
+#    runs-on: windows-latest
+#
+#    steps:
+#      - name: Checkout code
+#        uses: actions/checkout@v7
+#
+#      - name: Setup Flutter
+#        uses: subosito/flutter-action@v2
+#        with:
+#          channel: 'stable'
+#
+#      - name: Get Flutter dependencies
+#        run: flutter pub get
+#
+#      - name: Run tests
+#        run: flutter test
+#
+#      - name: Build Windows release
+#        run: flutter build windows --release
+#
+#      - name: Package Windows release
+#        run: powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+#
+#      - name: Extract Windows package for artifact
+#        run: |
+#          mkdir artifact-staging
+#          Expand-Archive -Path jof-launcher-windows.zip -DestinationPath artifact-staging
+#        shell: pwsh
+#
+#      - name: Upload Windows artifact
+#        uses: actions/upload-artifact@v7
+#        with:
+#          name: jof-launcher-windows
+#          path: artifact-staging
+#          retention-days: 5
+
+  release:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: jof-launcher-linux
+          path: dist
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: jof-launcher-macos
+          path: dist
+
+#      - name: Download Windows artifact
+#        uses: actions/download-artifact@v8
+#        with:
+#          name: jof-launcher-windows
+#          path: windows-artifact
+
+      - name: Download .deb artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: jof-launcher-deb
+          path: dist/deb
+
+#      - name: Recreate Windows zip for release
+#        run: cd windows-artifact && zip -r ../jof-launcher-windows.zip jof-launcher
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/jof-launcher-linux.tar.gz
+            dist/jof-launcher-macos.dmg
+            dist/deb/*.deb
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: eu-central-1
+
+      - name: Upload release files to S3
+        run: |
+          set -euo pipefail
+
+          # These keys are overwritten on every release, so CloudFront must not
+          # hold them. Without an explicit header the distribution falls back to
+          # its default TTL and keeps serving the previous release for a day.
+          LATEST_CACHE="public, max-age=60, must-revalidate"
+          # Versioned keys never change once published.
+          IMMUTABLE_CACHE="public, max-age=31536000, immutable"
+
+          aws s3 cp dist/jof-launcher-linux.tar.gz s3://jof-cloud/launcher/ \
+            --cache-control "$LATEST_CACHE" --only-show-errors
+          aws s3 cp dist/jof-launcher-macos.dmg s3://jof-cloud/launcher/ \
+            --cache-control "$LATEST_CACHE" --only-show-errors
+
+          # Versioned .deb, e.g. jof-launcher_1.1.6_amd64.deb
+          aws s3 cp dist/deb/ s3://jof-cloud/launcher/ --recursive \
+            --exclude "*" --include "*.deb" \
+            --cache-control "$IMMUTABLE_CACHE" --only-show-errors
+
+          # Unversioned alias per architecture, e.g. jof-launcher_amd64.deb,
+          # so downloads can point at a path that always holds the latest build.
+          for deb in dist/deb/*.deb; do
+            arch_suffix="${deb##*_}"
+            aws s3 cp "$deb" "s3://jof-cloud/launcher/jof-launcher_${arch_suffix}" \
+              --cache-control "$LATEST_CACHE" --only-show-errors
+            echo "Published latest alias: jof-launcher_${arch_suffix}"
+          done
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION%-launcher}"
+
+          # Version-pinned copies for the in-app updater.
+          #
+          # The updater pairs a URL with a sha256, so it must never be pointed at
+          # the mutable "latest" keys above: those sit behind a 60s CloudFront
+          # cache, and an edge still holding the previous release would fail the
+          # checksum on every retry. Immutable keys make URL and digest agree
+          # forever, and double as a rollback target.
+          aws s3 cp dist/jof-launcher-macos.dmg \
+            "s3://jof-cloud/launcher/jof-launcher-macos-${VERSION}.dmg" \
+            --cache-control "$IMMUTABLE_CACHE" --only-show-errors
+          aws s3 cp dist/jof-launcher-linux.tar.gz \
+            "s3://jof-cloud/launcher/jof-launcher-linux-${VERSION}.tar.gz" \
+            --cache-control "$IMMUTABLE_CACHE" --only-show-errors
+
+          DEB_FILE="$(ls dist/deb/*_amd64.deb | head -n1)"
+
+          # Written last, so the manifest can never advertise an artifact that
+          # failed to upload.
+          jq -n \
+            --arg version    "$VERSION" \
+            --arg tag        "$GITHUB_REF_NAME" \
+            --arg notes      "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --arg macUrl     "https://cloud.jof.app/launcher/jof-launcher-macos-${VERSION}.dmg" \
+            --arg macSha     "$(sha256sum dist/jof-launcher-macos.dmg | cut -d' ' -f1)" \
+            --argjson macSize "$(stat -c%s dist/jof-launcher-macos.dmg)" \
+            --arg tarUrl     "https://cloud.jof.app/launcher/jof-launcher-linux-${VERSION}.tar.gz" \
+            --arg tarSha     "$(sha256sum dist/jof-launcher-linux.tar.gz | cut -d' ' -f1)" \
+            --argjson tarSize "$(stat -c%s dist/jof-launcher-linux.tar.gz)" \
+            --arg debUrl     "https://cloud.jof.app/launcher/$(basename "$DEB_FILE")" \
+            --arg debSha     "$(sha256sum "$DEB_FILE" | cut -d' ' -f1)" \
+            --argjson debSize "$(stat -c%s "$DEB_FILE")" \
+            '{
+              schema: 1,
+              version: $version,
+              tag: $tag,
+              notesUrl: $notes,
+              downloadPageUrl: $notes,
+              artifacts: {
+                macos:    { url: $macUrl, sha256: $macSha, size: $macSize },
+                linuxTar: { url: $tarUrl, sha256: $tarSha, size: $tarSize },
+                linuxDeb: { url: $debUrl, sha256: $debSha, size: $debSize }
+              }
+            }' > latest.json
+
+          cat latest.json
+
+          aws s3 cp latest.json s3://jof-cloud/launcher/latest.json \
+            --content-type application/json \
+            --cache-control "$LATEST_CACHE" --only-show-errors
+          echo "Published update manifest for $VERSION"
