@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
@@ -32,18 +34,30 @@ class InstallOutcome {
 /// the job of waiting for us to exit, renaming the new copy into place and
 /// relaunching. Everything that can fail is done *before* the running install
 /// is touched.
+///
+/// Windows installs are the exception: the release is an Inno Setup
+/// installer, which already knows how to upgrade an install in place, so a
+/// helper only waits for us to exit and runs it silently.
 class SelfUpdateInstaller {
   final CloudService _cloudService;
   final ProcessRunner _runProcess;
   final ProcessSpawner _spawnProcess;
 
+  /// Starts the Windows helper with no console and no pipes back to this
+  /// process, which is about to exit.
+  final ProcessSpawner _spawnDetached;
+
   SelfUpdateInstaller({
     CloudService? cloudService,
     ProcessRunner? runProcess,
     ProcessSpawner? spawnProcess,
+    ProcessSpawner? spawnDetached,
   })  : _cloudService = cloudService ?? CloudService(),
         _runProcess = runProcess ?? Process.run,
-        _spawnProcess = spawnProcess ?? Process.start;
+        _spawnProcess = spawnProcess ?? Process.start,
+        _spawnDetached = spawnDetached ??
+            ((executable, args) => Process.start(executable, args,
+                mode: ProcessStartMode.detached));
 
   Future<InstallOutcome> install({
     required UpdateArtifact artifact,
@@ -55,6 +69,16 @@ class SelfUpdateInstaller {
   }) async {
     if (!location.canSelfUpdate || location.bundlePath == null) {
       return const InstallOutcome.failed('This install cannot update itself.');
+    }
+
+    if (location.kind == InstallKind.windowsInstalled) {
+      return _installWindows(
+        artifact: artifact,
+        expectedVersion: expectedVersion,
+        onProgress: onProgress,
+        onStatus: onStatus,
+        isCancelled: isCancelled,
+      );
     }
 
     final target = location.bundlePath!;
@@ -135,6 +159,105 @@ class SelfUpdateInstaller {
       await _cleanup(staging, tempDir);
       return InstallOutcome.failed('Update failed: $e');
     }
+  }
+
+  /// Downloads the installer and hands it to [windowsUpdateScript].
+  ///
+  /// There is no staged copy to check the version of: the installer is
+  /// trusted on the strength of the sha256 the manifest pairs with
+  /// [expectedVersion].
+  Future<InstallOutcome> _installWindows({
+    required UpdateArtifact artifact,
+    required String expectedVersion,
+    void Function(double progress)? onProgress,
+    void Function(String status)? onStatus,
+    bool Function()? isCancelled,
+  }) async {
+    Directory? tempDir;
+    try {
+      tempDir = await Directory.systemTemp.createTemp('jof_launcher_update_');
+      final installerPath = p.join(tempDir.path, p.basename(artifact.url));
+
+      onStatus?.call('Downloading launcher $expectedVersion');
+      await _cloudService.downloadFile(
+        url: artifact.url,
+        finalPath: installerPath,
+        expectedSize: artifact.size > 0 ? artifact.size : null,
+        expectedSha256: artifact.sha256,
+        onProgress: (value) => onProgress?.call(value * 0.95),
+        onStatus: onStatus,
+        isCancelled: isCancelled,
+      );
+
+      onProgress?.call(0.95);
+      onStatus?.call('Restarting to finish update');
+
+      final script = windowsUpdateScript(
+        parentPid: pid,
+        installerPath: installerPath,
+        logPath: p.join(tempDir.path, 'update.log'),
+      );
+      await _spawnDetached('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-EncodedCommand',
+        encodePowerShellCommand(script),
+      ]);
+
+      return const InstallOutcome.ready();
+    } catch (e) {
+      try {
+        if (tempDir != null && await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      } catch (_) {}
+      return InstallOutcome.failed('Update failed: $e');
+    }
+  }
+
+  /// Waits for the launcher to exit, then runs the installer silently.
+  ///
+  /// The installer must not start while we are running: our exe and DLLs are
+  /// locked until then, and a silent install that cannot replace them fails.
+  /// `/relaunch=1` makes the installer start the launcher again once it is
+  /// done (see windows/installer/jof-launcher.iss), and its log lands next to
+  /// the installer in the temp directory.
+  @visibleForTesting
+  static String windowsUpdateScript({
+    required int parentPid,
+    required String installerPath,
+    required String logPath,
+  }) {
+    // PowerShell single-quoted strings take everything literally except a
+    // doubled single quote, so this is the only escaping a path needs.
+    String quote(String value) => "'${value.replaceAll("'", "''")}'";
+
+    return '''
+\$log = ${quote(logPath)}
+Wait-Process -Id $parentPid -Timeout 30 -ErrorAction SilentlyContinue
+if (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) {
+  Add-Content -LiteralPath \$log 'launcher still running after 30s; aborting'
+  exit 1
+}
+Start-Process -FilePath ${quote(installerPath)} -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/relaunch=1', ('/LOG="' + \$log + '"'))
+''';
+  }
+
+  /// Encodes [script] for `powershell -EncodedCommand`: base64 of UTF-16LE.
+  /// Passing the script this way avoids a second layer of command-line
+  /// quoting around paths that can contain spaces or quotes.
+  @visibleForTesting
+  static String encodePowerShellCommand(String script) {
+    final units = script.codeUnits;
+    final bytes = ByteData(units.length * 2);
+    for (var i = 0; i < units.length; i++) {
+      bytes.setUint16(i * 2, units[i], Endian.little);
+    }
+    return base64Encode(bytes.buffer.asUint8List());
   }
 
   Future<void> _cleanup(Directory staging, Directory? temp) async {

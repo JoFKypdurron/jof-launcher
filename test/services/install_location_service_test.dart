@@ -12,6 +12,8 @@ const _macDev =
     '/Users/me/Sites/jof/launcher/build/macos/Build/Products/Release/JoF Launcher.app/Contents/MacOS/JoF Launcher';
 const _linuxDeb = '/opt/jof-launcher/jof-launcher';
 const _linuxTar = '/home/me/apps/jof-launcher/jof-launcher';
+const _windowsInstalled =
+    r'C:\Users\me\AppData\Local\Programs\JoF Launcher\jof-launcher.exe';
 
 InstallKind classifyMac(String exe, {bool release = true}) =>
     InstallLocationService.classify(
@@ -84,16 +86,34 @@ void main() {
     });
   });
 
-  test('classify - Windows is reserved, never eligible', () {
-    expect(
-      InstallLocationService.classify(
-        resolvedExecutable: r'C:\Program Files\JoF\jof-launcher.exe',
+  group('classify - Windows', () {
+    InstallKind classifyWindows({
+      required bool hasUninstaller,
+      bool isReleaseMode = true,
+    }) {
+      return InstallLocationService.classify(
+        resolvedExecutable: _windowsInstalled,
         os: 'windows',
         env: const {},
-        isReleaseMode: true,
-      ),
-      InstallKind.windows,
-    );
+        isReleaseMode: isReleaseMode,
+        hasWindowsUninstaller: hasUninstaller,
+      );
+    }
+
+    test('the installer leaves an uninstaller beside the exe', () {
+      expect(classifyWindows(hasUninstaller: true),
+          InstallKind.windowsInstalled);
+    });
+
+    test('without one it is the portable zip', () {
+      expect(classifyWindows(hasUninstaller: false),
+          InstallKind.windowsPortable);
+    });
+
+    test('a debug build is never treated as an install', () {
+      expect(classifyWindows(hasUninstaller: true, isReleaseMode: false),
+          InstallKind.unknown);
+    });
   });
 
   group('bundlePathFor', () {
@@ -113,6 +133,14 @@ void main() {
       );
     });
 
+    test('is the containing directory on Windows', () {
+      expect(
+        InstallLocationService.bundlePathFor(
+            resolvedExecutable: _windowsInstalled, os: 'windows'),
+        r'C:\Users\me\AppData\Local\Programs\JoF Launcher',
+      );
+    });
+
     test('is null when there is no .app ancestor', () {
       expect(
         InstallLocationService.bundlePathFor(
@@ -123,11 +151,19 @@ void main() {
   });
 
   group('eligibility', () {
-    Future<InstallLocation> detect(String exe, {required bool writable}) {
+    Future<InstallLocation> detect(
+      String exe, {
+      required bool writable,
+      bool hasUninstaller = true,
+    }) {
       return InstallLocationService(
         resolvedExecutableOverride: exe,
         environmentOverride: const {},
         writabilityProbe: (_) async => writable,
+        fileExistsProbe: (path) async {
+          expect(path, endsWith(r'\JoF Launcher\unins000.exe'));
+          return hasUninstaller;
+        },
         isReleaseModeOverride: true,
         osOverride: exe.endsWith('.exe') ? 'windows' : (exe.contains('.app/') ? 'macos' : 'linux'),
       ).detect();
@@ -154,6 +190,24 @@ void main() {
           UpdateArtifactKind.linuxTar);
       expect((await detect(_macApp, writable: true)).artifactKind,
           UpdateArtifactKind.macos);
+      expect((await detect(_windowsInstalled, writable: true)).artifactKind,
+          UpdateArtifactKind.windows);
+    });
+
+    test('an installer install updates itself', () async {
+      final loc = await detect(_windowsInstalled, writable: true);
+      expect(loc.kind, InstallKind.windowsInstalled);
+      expect(loc.canSelfUpdate, isTrue);
+      expect(loc.reason, isNull);
+    });
+
+    test('the portable zip points the user at the installer', () async {
+      final loc = await detect(_windowsInstalled,
+          writable: true, hasUninstaller: false);
+      expect(loc.kind, InstallKind.windowsPortable);
+      expect(loc.canSelfUpdate, isFalse);
+      expect(loc.artifactKind, isNull);
+      expect(loc.reason, contains('installer'));
     });
   });
 }

@@ -86,8 +86,11 @@ The output will be `jof-launcher-macos.dmg` in the project root.
 Run `jof-launcher-windows-setup.exe`. It installs for the current user into
 `%LOCALAPPDATA%\Programs\JoF Launcher` without asking for administrator
 rights, adds a Start menu entry, and can be removed from **Settings > Apps**.
-Running a newer installer upgrades in place. The portable zip runs from
-wherever it is extracted, but does not update itself.
+Installed copies update themselves: when a release is out, the launcher
+downloads the new installer, checks its sha256 against `latest.json`, quits,
+and runs it silently; the installer upgrades in place and starts the launcher
+again. Running a newer installer by hand does the same. The portable zip runs
+from wherever it is extracted, but does not update itself.
 
 The Windows build is **not code-signed**, so Microsoft Defender SmartScreen
 warns about it on first run. This is expected. To continue:

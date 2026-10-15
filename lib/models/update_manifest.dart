@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 /// Which release artifact a given install needs.
-enum UpdateArtifactKind { macos, linuxTar, linuxDeb }
+enum UpdateArtifactKind { macos, linuxTar, linuxDeb, windows }
 
 class UpdateArtifact {
   final String url;
@@ -66,6 +66,7 @@ class UpdateManifest {
     'macos': UpdateArtifactKind.macos,
     'linuxTar': UpdateArtifactKind.linuxTar,
     'linuxDeb': UpdateArtifactKind.linuxDeb,
+    'windows': UpdateArtifactKind.windows,
   };
 
   /// Parses a manifest document, returning null for anything unusable.

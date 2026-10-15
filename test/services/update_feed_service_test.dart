@@ -33,6 +33,12 @@ String manifestJson({
           'sha256': 'b' * 64,
           'size': 11103881,
         },
+        'windows': {
+          'url':
+              'https://cloud.jof.app/launcher/jof-launcher-windows-setup-$version.exe',
+          'sha256': 'c' * 64,
+          'size': 15000000,
+        },
       },
   });
 }
@@ -59,6 +65,7 @@ void main() {
       expect(m.isSupportedSchema, isTrue);
       expect(m.artifactFor(UpdateArtifactKind.macos)!.sha256, 'a' * 64);
       expect(m.artifactFor(UpdateArtifactKind.linuxTar)!.size, 11103881);
+      expect(m.artifactFor(UpdateArtifactKind.windows)!.sha256, 'c' * 64);
       // Not published in this manifest.
       expect(m.artifactFor(UpdateArtifactKind.linuxDeb), isNull);
     });
@@ -122,6 +129,19 @@ void main() {
             'size': 456,
           },
           {
+            'name': 'jof-launcher-windows-setup.exe',
+            'browser_download_url': 'https://github.invalid/setup.exe',
+            'digest': 'sha256:${'f' * 64}',
+            'size': 321,
+          },
+          {
+            // The portable zip cannot update an install; never offered.
+            'name': 'jof-launcher-windows.zip',
+            'browser_download_url': 'https://github.invalid/a.zip',
+            'digest': 'sha256:${'0' * 64}',
+            'size': 654,
+          },
+          {
             // No digest: unverifiable, so it must not be offered.
             'name': 'jof-launcher_1.2.0_amd64.deb',
             'browser_download_url': 'https://github.invalid/a.deb',
@@ -139,6 +159,8 @@ void main() {
       expect(m!.version, '1.2.0', reason: 'tag decoration should be stripped');
       expect(m.tag, 'v1.2.0-launcher');
       expect(m.artifactFor(UpdateArtifactKind.macos)!.sha256, 'd' * 64);
+      expect(m.artifactFor(UpdateArtifactKind.windows)!.url,
+          'https://github.invalid/setup.exe');
       expect(m.artifactFor(UpdateArtifactKind.linuxDeb), isNull);
     });
 

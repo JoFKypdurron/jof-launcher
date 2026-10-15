@@ -138,6 +138,9 @@ class UpdateFeedService {
     if (name.startsWith('jof-launcher-linux') && name.endsWith('.tar.gz')) {
       return UpdateArtifactKind.linuxTar;
     }
+    if (name == 'jof-launcher-windows-setup.exe') {
+      return UpdateArtifactKind.windows;
+    }
     return null;
   }
 }

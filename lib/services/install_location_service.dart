@@ -29,8 +29,13 @@ enum InstallKind {
   /// AppImage or Snap — owned by another update mechanism.
   linuxPackagedOther,
 
-  /// Reserved: Windows releases are not currently published.
-  windows,
+  /// Installed by the Inno Setup installer, which leaves its uninstaller
+  /// beside the executable. Updated by running the next installer.
+  windowsInstalled,
+
+  /// The portable zip, extracted wherever the user chose. Not self-updated:
+  /// the installer would install a second copy rather than replace this one.
+  windowsPortable,
 
   unknown,
 }
@@ -40,7 +45,8 @@ class InstallLocation {
   final String executablePath;
 
   /// The thing that would be swapped: the `.app` bundle on macOS, the
-  /// extracted directory on Linux. Null when it could not be determined.
+  /// extracted directory on Linux, the install directory on Windows. Null
+  /// when it could not be determined.
   final String? bundlePath;
 
   /// Whether the *parent* of [bundlePath] is writable. The swap renames within
@@ -60,7 +66,9 @@ class InstallLocation {
   bool get canSelfUpdate =>
       parentWritable &&
       bundlePath != null &&
-      (kind == InstallKind.macosAppBundle || kind == InstallKind.linuxTarball);
+      (kind == InstallKind.macosAppBundle ||
+          kind == InstallKind.linuxTarball ||
+          kind == InstallKind.windowsInstalled);
 
   /// Which release artifact this install would need.
   UpdateArtifactKind? get artifactKind {
@@ -74,8 +82,10 @@ class InstallLocation {
         return UpdateArtifactKind.linuxTar;
       case InstallKind.linuxDeb:
         return UpdateArtifactKind.linuxDeb;
+      case InstallKind.windowsInstalled:
+        return UpdateArtifactKind.windows;
       case InstallKind.linuxPackagedOther:
-      case InstallKind.windows:
+      case InstallKind.windowsPortable:
       case InstallKind.unknown:
         return null;
     }
@@ -83,9 +93,14 @@ class InstallLocation {
 }
 
 class InstallLocationService {
+  /// The uninstaller Inno Setup writes into the install directory. Its
+  /// presence is what tells an installed copy from the portable zip.
+  static const String windowsUninstallerName = 'unins000.exe';
+
   final String? _resolvedExecutableOverride;
   final Map<String, String>? _environmentOverride;
   final Future<bool> Function(String directory)? _writabilityProbe;
+  final Future<bool> Function(String path)? _fileExistsProbe;
 
   /// Test seam. Under `flutter test` [kReleaseMode] is false, which would
   /// classify every install as a dev build and make the eligibility rules
@@ -100,11 +115,13 @@ class InstallLocationService {
     String? resolvedExecutableOverride,
     Map<String, String>? environmentOverride,
     Future<bool> Function(String directory)? writabilityProbe,
+    Future<bool> Function(String path)? fileExistsProbe,
     bool? isReleaseModeOverride,
     String? osOverride,
   })  : _resolvedExecutableOverride = resolvedExecutableOverride,
         _environmentOverride = environmentOverride,
         _writabilityProbe = writabilityProbe,
+        _fileExistsProbe = fileExistsProbe,
         _isReleaseModeOverride = isReleaseModeOverride,
         _osOverride = osOverride;
 
@@ -113,11 +130,20 @@ class InstallLocationService {
     final env = _environmentOverride ?? Platform.environment;
     final os = _osOverride ?? Platform.operatingSystem;
 
+    var hasWindowsUninstaller = false;
+    if (os == 'windows') {
+      final uninstaller =
+          p.windows.join(p.windows.dirname(executable), windowsUninstallerName);
+      hasWindowsUninstaller =
+          await (_fileExistsProbe ?? (path) => File(path).exists())(uninstaller);
+    }
+
     final kind = classify(
       resolvedExecutable: executable,
       os: os,
       env: env,
       isReleaseMode: _isReleaseModeOverride ?? kReleaseMode,
+      hasWindowsUninstaller: hasWindowsUninstaller,
     );
     final bundle = bundlePathFor(resolvedExecutable: executable, os: os);
 
@@ -138,7 +164,7 @@ class InstallLocationService {
   /// The directory that would be replaced, derived purely from [resolvedExecutable].
   ///
   /// macOS: `…/JoF Launcher.app/Contents/MacOS/JoF Launcher` → the `.app`.
-  /// Linux: the directory holding the binary.
+  /// Linux and Windows: the directory holding the binary.
   @visibleForTesting
   static String? bundlePathFor({
     required String resolvedExecutable,
@@ -157,18 +183,27 @@ class InstallLocationService {
       return null;
     }
     if (os == 'linux') return p.posix.dirname(resolvedExecutable);
+    if (os == 'windows') return p.windows.dirname(resolvedExecutable);
     return null;
   }
 
-  /// Pure classification — no filesystem access, so the whole matrix is testable.
+  /// Pure classification — no filesystem access, so the whole matrix is
+  /// testable. [hasWindowsUninstaller] is whether [windowsUninstallerName]
+  /// sits beside the executable.
   @visibleForTesting
   static InstallKind classify({
     required String resolvedExecutable,
     required String os,
     required Map<String, String> env,
     required bool isReleaseMode,
+    bool hasWindowsUninstaller = false,
   }) {
-    if (os == 'windows') return InstallKind.windows;
+    if (os == 'windows') {
+      if (!isReleaseMode) return InstallKind.unknown;
+      return hasWindowsUninstaller
+          ? InstallKind.windowsInstalled
+          : InstallKind.windowsPortable;
+    }
 
     if (os == 'macos') {
       // Checked before anything else: a translocated path is a copy, so every
@@ -211,11 +246,13 @@ class InstallLocationService {
         return 'Installed from a .deb package.';
       case InstallKind.linuxPackagedOther:
         return 'Managed by the packaging system.';
-      case InstallKind.windows:
+      case InstallKind.windowsPortable:
+        return 'Portable copy. Use the installer to get automatic updates.';
       case InstallKind.unknown:
         return 'Unrecognised install location.';
       case InstallKind.macosAppBundle:
       case InstallKind.linuxTarball:
+      case InstallKind.windowsInstalled:
         return writable ? null : 'No write access to the install folder.';
     }
   }
