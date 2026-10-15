@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' as io show Directory, File, HttpClient, X509Certificate, SecurityContext, Process, FileSystemEntity, FileSystemEntityType, Platform, Request, BadCertificateCallback, IOSink, FileMode, FileSystemException, SocketException, HttpException;
+import 'dart:typed_data';
+import 'dart:io' as io show Directory, File, HttpClient, X509Certificate, SecurityContext, Process, FileSystemEntity, FileSystemEntityType, Platform, Request, BadCertificateCallback, IOSink, FileMode, FileSystemException, RandomAccessFile, SocketException, HttpException;
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -149,6 +150,15 @@ class CloudService {
   /// Idle timeout between received chunks. A stalled (half-open) socket trips
   /// this and throws, instead of hanging the download forever.
   static const Duration _idleTimeout = Duration(seconds: 30);
+
+  /// Received bytes are coalesced into writes of this size. The HTTP stream
+  /// delivers ~5 KB chunks, and one async file write per chunk measurably
+  /// throttles throughput on fast connections.
+  static const int _writeBufferSize = 1 << 20;
+
+  /// Minimum interval between progress callbacks. Each callback rebuilds UI
+  /// state, so firing it per network chunk (thousands per file) is wasteful.
+  static const Duration _progressInterval = Duration(milliseconds: 100);
 
   /// Creates an HTTP client with proper certificate handling for Windows
   http.Client _createHttpClient() {
@@ -413,7 +423,8 @@ class CloudService {
       var offset = await partFile.exists() ? await partFile.length() : 0;
 
       http.Client? client;
-      io.IOSink? sink;
+      io.RandomAccessFile? sink;
+      final buffer = BytesBuilder(copy: false);
       try {
         client = _createHttpClient();
         final request = http.Request('GET', Uri.parse(url));
@@ -447,24 +458,34 @@ class CloudService {
           throw Exception('Failed to download asset: ${response.statusCode}');
         }
 
-        sink = partFile.openWrite(
+        sink = await partFile.open(
           mode: append ? io.FileMode.append : io.FileMode.write,
         );
         var received = offset;
+        final sinceProgress = Stopwatch()..start();
 
         await for (final chunk in response.stream.timeout(_idleTimeout)) {
           if (cancelled()) {
             throw Exception('Download cancelled');
           }
-          sink.add(chunk);
+          buffer.add(chunk);
           received += chunk.length;
-          if (total > 0) {
+          if (buffer.length >= _writeBufferSize) {
+            await sink.writeFrom(buffer.takeBytes());
+          }
+          if (total > 0 && sinceProgress.elapsed >= _progressInterval) {
+            sinceProgress.reset();
             onProgress?.call((received / total).clamp(0.0, 1.0));
           }
         }
 
-        await sink.flush();
+        if (buffer.isNotEmpty) {
+          await sink.writeFrom(buffer.takeBytes());
+        }
         await sink.close();
+        if (total > 0) {
+          onProgress?.call((received / total).clamp(0.0, 1.0));
+        }
         sink = null;
         client.close();
         client = null;
@@ -502,6 +523,10 @@ class CloudService {
         return;
       } catch (e) {
         try {
+          // Persist bytes already received so the resume continues from them.
+          if (sink != null && buffer.isNotEmpty) {
+            await sink.writeFrom(buffer.takeBytes());
+          }
           await sink?.close();
         } catch (_) {}
         client?.close();
