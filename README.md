@@ -30,6 +30,22 @@ Versioned `.deb` builds are kept alongside them under
 `jof-launcher_<version>_<arch>.deb` if you need to pin or roll back to a
 specific release.
 
+## Releasing
+
+Releases are automatic: every merge to `main` that touches the app (anything
+outside `*.md`, `LICENSE` and `.github/`) bumps `pubspec.yaml`, tags `vX.Y.Z`
+and publishes. Don't bump the version by hand. Label the PR to control the bump:
+
+| PR label | Effect |
+| --- | --- |
+| _(none)_ | patch (`1.1.16` → `1.1.17`) |
+| `release:minor` | minor (`1.1.16` → `1.2.0`) |
+| `release:major` | major (`1.1.16` → `2.0.0`) |
+| `release:skip` | merge without releasing |
+
+To cut a release by hand (for example, after merging a `release:skip` PR), run
+the **Auto Release** workflow from the Actions tab and pick the bump.
+
 ## Building from Source
 
 ### Prerequisites

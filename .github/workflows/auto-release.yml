@@ -1,0 +1,106 @@
+name: Auto Release
+
+# Every merge to main ships: bump pubspec.yaml, tag, and hand off to
+# release.yml. Bump size comes from the merged PR's labels:
+#   release:major / release:minor -> that bump, release:skip -> no release,
+#   no label (or a direct push)   -> patch.
+on:
+  push:
+    branches:
+      - main
+    # Changes that don't affect the shipped app don't cut a release.
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/**'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+# Serialize so two quick merges can't compute the same next version.
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    # The bump commit is pushed with GITHUB_TOKEN, which never re-triggers
+    # workflows; the message check is a second guard against a release loop.
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    permissions:
+      contents: write       # push the bump commit and tag
+      actions: write        # dispatch release.yml
+      pull-requests: read   # read the merged PR's labels
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Determine bump
+        id: bump
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BUMP="${{ inputs.bump }}"
+          else
+            LABELS="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq '.[0].labels[]?.name' || true)"
+            if   grep -qx 'release:skip'  <<<"$LABELS"; then BUMP=skip
+            elif grep -qx 'release:major' <<<"$LABELS"; then BUMP=major
+            elif grep -qx 'release:minor' <<<"$LABELS"; then BUMP=minor
+            else BUMP=patch
+            fi
+          fi
+          echo "Bump: $BUMP"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+
+      - name: Bump pubspec, tag and push
+        if: steps.bump.outputs.bump != 'skip'
+        id: version
+        run: |
+          set -euo pipefail
+          CURRENT="$(grep -E '^version:' pubspec.yaml | head -n1 | awk '{print $2}')"
+          CURRENT="${CURRENT%%+*}"
+          IFS=. read -r MAJOR MINOR PATCH <<<"$CURRENT"
+          case "${{ steps.bump.outputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEXT="${MAJOR}.${MINOR}.${PATCH}"
+          TAG="v${NEXT}"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} already exists."
+            exit 1
+          fi
+
+          sed -i -E "s/^version: .*/version: ${NEXT}/" pubspec.yaml
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): ${TAG} [skip ci]"
+          git tag -a "${TAG}" -m "${TAG}"
+          # Atomic: never leave a tag without its bump commit on main, or the reverse.
+          git push --atomic origin HEAD:main "${TAG}"
+
+          echo "Tagged ${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      # A tag pushed with GITHUB_TOKEN does not fire release.yml's `push: tags`
+      # trigger, but workflow_dispatch does. Running it on the tag ref keeps
+      # github.ref identical to a manual tag push (release gating, version
+      # parsing and the AWS OIDC subject all still see refs/tags/vX.Y.Z).
+      - name: Start release build
+        if: steps.bump.outputs.bump != 'skip'
+        run: gh workflow run release.yml --ref "${{ steps.version.outputs.tag }}"
