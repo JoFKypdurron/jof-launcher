@@ -74,7 +74,7 @@ void main() {
       );
 
       final info = await service.getExecutableInfo('/GameData');
-      expect(info!.executablePath, '/GameData/eternaljk.arm64.app');
+      expect(info!.executablePath, p.join('/GameData', 'eternaljk.arm64.app'));
       expect(info.workingDirectory, '/GameData');
     });
 
@@ -91,7 +91,7 @@ void main() {
       );
 
       expect((await service.getExecutableInfo('/GameData'))!.executablePath,
-          '/GameData/eternaljk.arm64.app');
+          p.join('/GameData', 'eternaljk.arm64.app'));
     });
 
     test('falls back to the stored architecture when detection fails',
@@ -104,7 +104,7 @@ void main() {
       );
 
       expect((await service.getExecutableInfo('/GameData'))!.executablePath,
-          '/GameData/eternaljk.arm64.app');
+          p.join('/GameData', 'eternaljk.arm64.app'));
     });
   });
 

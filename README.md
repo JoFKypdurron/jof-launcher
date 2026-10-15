@@ -6,7 +6,7 @@ JoF Launcher is a cross-platform application for managing and launching Jedi Aca
 
 - Linux
 - macOS (experimental)
-- Windows (builds from source; not currently part of the automated release)
+- Windows 10 and 11 (x64; ARM64 runs it under emulation)
 
 ## Downloads
 
@@ -19,6 +19,8 @@ Every tagged release is published to
 | Linux (.deb) | `https://cloud.jof.app/launcher/jof-launcher_amd64.deb` |
 | Linux (tarball) | `https://cloud.jof.app/launcher/jof-launcher-linux.tar.gz` |
 | macOS | `https://cloud.jof.app/launcher/jof-launcher-macos.dmg` |
+| Windows (installer) | `https://cloud.jof.app/launcher/jof-launcher-windows-setup.exe` |
+| Windows (portable zip) | `https://cloud.jof.app/launcher/jof-launcher-windows.zip` |
 
 Install the Debian package with:
 
@@ -67,7 +69,10 @@ The output will be `jof-launcher-linux.tar.gz` in the project root.
 flutter build windows --release
 .\scripts\package-windows.ps1
 ```
-The output will be `jof-launcher-windows.zip` in the project root.
+The output will be `jof-launcher-windows-setup.exe` and
+`jof-launcher-windows.zip` in the project root. The installer needs
+[Inno Setup 6](https://jrsoftware.org/isinfo.php); without it only the zip is
+built. The installer script is `windows/installer/jof-launcher.iss`.
 
 #### macOS
 ```bash
@@ -75,6 +80,23 @@ flutter build macos --release
 ./scripts/package-macos.sh
 ```
 The output will be `jof-launcher-macos.dmg` in the project root.
+
+## Installing on Windows
+
+Run `jof-launcher-windows-setup.exe`. It installs for the current user into
+`%LOCALAPPDATA%\Programs\JoF Launcher` without asking for administrator
+rights, adds a Start menu entry, and can be removed from **Settings > Apps**.
+Running a newer installer upgrades in place. The portable zip runs from
+wherever it is extracted, but does not update itself.
+
+The Windows build is **not code-signed**, so Microsoft Defender SmartScreen
+warns about it on first run. This is expected. To continue:
+
+1. In the "Windows protected your PC" dialog, click **More info**.
+2. Click **Run anyway**.
+
+Some browsers also flag the download as uncommon; choose **Keep** in the
+download list. Signing the installer would remove both warnings.
 
 ## Installing on macOS
 

@@ -144,17 +144,19 @@ class InstallLocationService {
     required String resolvedExecutable,
     required String os,
   }) {
+    // The Linux and macOS rules always parse POSIX paths, also when tests
+    // exercise them from a Windows host, whose `p` would rewrite `/` to `\`.
     if (os == 'macos') {
-      var dir = p.dirname(resolvedExecutable);
+      var dir = p.posix.dirname(resolvedExecutable);
       for (var i = 0; i < 3; i++) {
-        if (p.extension(dir) == '.app') return dir;
-        final parent = p.dirname(dir);
+        if (p.posix.extension(dir) == '.app') return dir;
+        final parent = p.posix.dirname(dir);
         if (parent == dir) break;
         dir = parent;
       }
       return null;
     }
-    if (os == 'linux') return p.dirname(resolvedExecutable);
+    if (os == 'linux') return p.posix.dirname(resolvedExecutable);
     return null;
   }
 
@@ -188,7 +190,7 @@ class InstallLocationService {
       if (env['APPIMAGE'] != null || env['SNAP'] != null) {
         return InstallKind.linuxPackagedOther;
       }
-      final dir = p.normalize(p.dirname(resolvedExecutable));
+      final dir = p.posix.normalize(p.posix.dirname(resolvedExecutable));
       if (dir == '/opt/jof-launcher') return InstallKind.linuxDeb;
       if (!isReleaseMode) return InstallKind.unknown;
       return InstallKind.linuxTarball;

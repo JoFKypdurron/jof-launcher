@@ -37,6 +37,7 @@ migrate_working_dir/
 /jof-launcher-linux.tar.gz
 /jof-launcher-macos.dmg
 /jof-launcher-windows.zip
+/jof-launcher-windows-setup.exe
 
 # Symbolication related
 app.*.symbols
