@@ -37,7 +37,12 @@ class Asset {
     );
   }
 
-  String get downloadUrl => Uri.https('jofhub.eu', '/apps/cloud/repository/$localFolder/$name').toString();
+  /// `<localfolder>/<name>` as path segments, relative to a repository root.
+  /// The host is chosen by `CloudService` (see `RepositoryEndpoint.fileUri`).
+  List<String> get repositoryPath => [
+        ...localFolder.split('/').where((s) => s.isNotEmpty),
+        name,
+      ];
 
   @override
   bool operator ==(Object other) =>

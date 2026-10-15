@@ -17,6 +17,7 @@ class SettingsService {
   static const String _linuxSystemArchKey = 'linux_system_arch';
   static const String _macosSystemArchKey = 'macos_system_arch';
   static const String _clientChannelKey = 'client_channel';
+  static const String _repositorySourceKey = 'repository_source';
   static const String _updateCheckEnabledKey = 'update_check_enabled';
   static const String _updateSkippedVersionKey = 'update_skipped_version';
   static const String _updateLastCheckMsKey = 'update_last_check_ms';
@@ -200,6 +201,16 @@ class SettingsService {
   Future<String?> getClientChannel() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_clientChannelKey);
+  }
+
+  Future<void> setRepositorySource(String persistedValue) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_repositorySourceKey, persistedValue);
+  }
+
+  Future<String?> getRepositorySource() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_repositorySourceKey);
   }
 
   Future<void> setUpdateCheckEnabled(bool value) async {

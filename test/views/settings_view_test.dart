@@ -141,6 +141,25 @@ void main() {
     skip: !Platform.isLinux && !Platform.isMacOS && !Platform.isWindows,
   );
 
+  testWidgets('SettingsView persists the download source pick', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SettingsView()));
+    await tester.pumpAndSettle();
+
+    final dropdown = find.byKey(SettingsView.repositorySourceDropdownKey);
+    expect(dropdown, findsOneWidget);
+    expect(find.text('Auto (JoF Cloud, fall back to jofhub.eu)'), findsOneWidget);
+
+    await tester.ensureVisible(dropdown);
+    await tester.tap(dropdown);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('jofhub.eu only').last);
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('repository_source'), 'origin');
+  });
+
   testWidgets('clearing download path TextField removes it from settings', (WidgetTester tester) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('game_data_path', '/old/path');
