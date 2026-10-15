@@ -5,7 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
+import '../services/log_service.dart';
 import '../services/self_update_service.dart';
+import '../theme/jof_tokens.dart';
+import '../widgets/jof/jof_box.dart';
+import '../widgets/jof/jof_primitives.dart';
 import '../services/url_opener_service.dart';
 
 const Key checkForUpdatesButtonKey = Key('info_check_for_updates');
@@ -46,6 +50,7 @@ class _InfoViewState extends State<InfoView> {
       widget.urlOpener ?? UrlOpenerService();
 
   bool _isCheckingForUpdate = false;
+  String? _logFilePath;
   String? _updateMessage;
   String? _updateDownloadUrl;
 
@@ -75,7 +80,8 @@ class _InfoViewState extends State<InfoView> {
         _updateMessage =
             'Version ${result.availableVersion} is available. Installing…';
       } else {
-        _updateMessage = 'Version ${result.availableVersion} is available.'
+        _updateMessage =
+            'Version ${result.availableVersion} is available.'
             '${result.ineligibilityReason == null ? '' : '\n${result.ineligibilityReason}'}'
             '\nOpening the download page…';
       }
@@ -91,7 +97,8 @@ class _InfoViewState extends State<InfoView> {
       if (applied) return; // The app is quitting; the helper takes over.
       if (mounted) {
         setState(() {
-          _updateMessage = 'Could not install automatically. '
+          _updateMessage =
+              'Could not install automatically. '
               'Opening the download page…';
         });
       }
@@ -105,7 +112,8 @@ class _InfoViewState extends State<InfoView> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('Could not open the browser. Link copied.')),
+            content: Text('Could not open the browser. Link copied.'),
+          ),
         );
       }
     }
@@ -115,6 +123,14 @@ class _InfoViewState extends State<InfoView> {
   void initState() {
     super.initState();
     _loadInfo();
+    _loadLogFilePath();
+  }
+
+  // Separate from _loadInfo: resolving the log directory touches the file
+  // system and must not hold up the rest of the screen.
+  Future<void> _loadLogFilePath() async {
+    final path = await LogService.instance.logFilePath();
+    if (mounted && path != null) setState(() => _logFilePath = path);
   }
 
   Future<void> _loadInfo() async {
@@ -127,7 +143,8 @@ class _InfoViewState extends State<InfoView> {
         // Skip in tests to avoid hanging on missing platform services
       } else if (Platform.isAndroid) {
         final androidInfo = await deviceInfo.androidInfo;
-        platformVersion = 'Android ${androidInfo.version.release} (SDK ${androidInfo.version.sdkInt})';
+        platformVersion =
+            'Android ${androidInfo.version.release} (SDK ${androidInfo.version.sdkInt})';
       } else if (Platform.isIOS) {
         final iosInfo = await deviceInfo.iosInfo;
         platformVersion = 'iOS ${iosInfo.systemVersion}';
@@ -139,7 +156,8 @@ class _InfoViewState extends State<InfoView> {
         platformVersion = 'macOS ${macosInfo.osRelease}';
       } else if (Platform.isWindows) {
         final windowsInfo = await deviceInfo.windowsInfo;
-        platformVersion = 'Windows ${windowsInfo.displayVersion} (Build ${windowsInfo.buildNumber})';
+        platformVersion =
+            'Windows ${windowsInfo.displayVersion} (Build ${windowsInfo.buildNumber})';
       }
     } catch (e) {
       // Ignore errors in getting device info
@@ -147,9 +165,13 @@ class _InfoViewState extends State<InfoView> {
 
     if (mounted) {
       setState(() {
-        _appName = packageInfo.appName.isEmpty ? 'JoF Launcher' : packageInfo.appName;
+        _appName = packageInfo.appName.isEmpty
+            ? 'JoF Launcher'
+            : packageInfo.appName;
         _version = packageInfo.version.isEmpty ? '1.0.2' : packageInfo.version;
-        _buildNumber = packageInfo.buildNumber.isEmpty ? '1' : packageInfo.buildNumber;
+        _buildNumber = packageInfo.buildNumber.isEmpty
+            ? '1'
+            : packageInfo.buildNumber;
         _platform = Platform.operatingSystem;
         _platformVersion = platformVersion;
       });
@@ -165,6 +187,7 @@ Platform: $_platform
 Platform Version: $_platformVersion
 Dart Version: $_dartVersion
 Local Time: ${DateTime.now()}
+Log File: ${_logFilePath ?? 'Unavailable'}
 ''';
   }
 
@@ -177,89 +200,158 @@ Local Time: ${DateTime.now()}
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Information'),
-        backgroundColor: const Color(0xFF03273C),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildInfoItem('App Name', _appName),
-            _buildInfoItem('Version', _version),
-            _buildInfoItem('Build Number', _buildNumber),
-            _buildInfoItem('Platform', _platform),
-            _buildInfoItem('Platform Version', _platformVersion),
-            _buildInfoItem('Dart Version', _dartVersion),
-            _buildInfoItem('Local Time', DateTime.now().toString()),
-            const SizedBox(height: 24),
-            Center(
-              child: ElevatedButton.icon(
-                onPressed: _copyToClipboard,
-                icon: const Icon(Icons.copy),
-                label: const Text('Copy Debug Info'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Center(
-              child: OutlinedButton.icon(
-                key: checkForUpdatesButtonKey,
-                onPressed: _isCheckingForUpdate ? null : _checkForUpdate,
-                icon: _isCheckingForUpdate
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.system_update_alt),
-                label: Text(_isCheckingForUpdate
-                    ? 'Checking…'
-                    : 'Check for Updates'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
-              ),
-            ),
-            if (_updateMessage != null) ...[
-              const SizedBox(height: 12),
-              Center(
-                child: Text(
-                  _updateMessage!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70),
-                ),
+    final about = JofBox(
+      title: 'About',
+      padded: false,
+      child: SelectionArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: JofSpace.sm),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildInfoItem('App Name', _appName),
+              _buildInfoItem('Version', _version),
+              _buildInfoItem('Build Number', _buildNumber),
+              _buildInfoItem('Platform', _platform),
+              _buildInfoItem('Platform Version', _platformVersion),
+              _buildInfoItem('Dart Version', _dartVersion),
+              _buildInfoItem(
+                'Local Time',
+                DateTime.now().toString(),
+                last: true,
               ),
             ],
+          ),
+        ),
+      ),
+    );
+
+    final updates = JofBox(
+      title: 'Updates',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_updateMessage != null) ...[
+            Text(
+              _updateMessage!,
+              style: const TextStyle(color: JofColors.textMuted),
+            ),
+            const SizedBox(height: JofSpace.md),
           ],
+          ElevatedButton.icon(
+            key: checkForUpdatesButtonKey,
+            onPressed: _isCheckingForUpdate ? null : _checkForUpdate,
+            icon: _isCheckingForUpdate
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.system_update_alt),
+            label: Text(
+              _isCheckingForUpdate ? 'CHECKING…' : 'CHECK FOR UPDATES',
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final support = JofBox(
+      title: 'Support',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_logFilePath != null) ...[
+            const Text(
+              'Log file',
+              style: TextStyle(color: JofColors.textMuted),
+            ),
+            const SizedBox(height: JofSpace.xs),
+            JofWell(
+              child: SelectableText(
+                _logFilePath!,
+                style: JofText.caption.copyWith(color: JofColors.text),
+              ),
+            ),
+            const SizedBox(height: JofSpace.sm),
+          ],
+          ElevatedButton.icon(
+            onPressed: _copyToClipboard,
+            icon: const Icon(Icons.copy),
+            label: const Text('COPY DEBUG INFO'),
+          ),
+        ],
+      ),
+    );
+
+    return Scaffold(
+      appBar: const JofTopBar(title: 'Information'),
+      body: SingleChildScrollView(
+        child: JofContent(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 800) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    about,
+                    const SizedBox(height: JofSpace.lg),
+                    updates,
+                    const SizedBox(height: JofSpace.lg),
+                    support,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 3, child: about),
+                  const SizedBox(width: JofSpace.lg),
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        updates,
+                        const SizedBox(height: JofSpace.lg),
+                        support,
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildInfoItem(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Column(
+  Widget _buildInfoItem(String label, String value, {bool last = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: JofSpace.sm),
+      decoration: last
+          ? null
+          : const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: JofColors.border,
+                  width: JofSpace.xxs,
+                ),
+              ),
+            ),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.grey,
+          SizedBox(
+            width: 180,
+            child: Text(
+              label.toUpperCase(),
+              style: JofText.buttonLabel.copyWith(color: JofColors.textMuted),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 16),
-          ),
-          const Divider(),
+          const SizedBox(width: JofSpace.md),
+          Expanded(child: Text(value)),
         ],
       ),
     );

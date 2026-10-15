@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 
-enum BottomStatusSeverity {
-  info,
-  warning,
-  error,
-}
+import '../theme/jof_tokens.dart';
+
+enum BottomStatusSeverity { info, warning, error }
 
 class BottomStatusBar extends StatelessWidget {
   final IconData icon;
@@ -35,33 +33,33 @@ class BottomStatusBar extends StatelessWidget {
   Color _borderColor() {
     switch (severity) {
       case BottomStatusSeverity.info:
-        return Colors.white24;
+        return JofColors.border;
       case BottomStatusSeverity.warning:
-        return Colors.amber.withValues(alpha: 0.5);
+        return JofColors.warningBorder;
       case BottomStatusSeverity.error:
-        return Colors.redAccent.withValues(alpha: 0.6);
+        return JofColors.dangerBorder;
     }
   }
 
   Color _backgroundColor() {
     switch (severity) {
       case BottomStatusSeverity.info:
-        return const Color(0xFF03273C);
+        return JofColors.surface;
       case BottomStatusSeverity.warning:
-        return Colors.amber.withValues(alpha: 0.12);
+        return JofColors.warningSurface;
       case BottomStatusSeverity.error:
-        return Colors.red.withValues(alpha: 0.12);
+        return JofColors.dangerSurface;
     }
   }
 
   Color _accentColor() {
     switch (severity) {
       case BottomStatusSeverity.info:
-        return const Color(0xFFA5D8FF);
+        return JofColors.highlight;
       case BottomStatusSeverity.warning:
-        return Colors.amberAccent;
+        return JofColors.warning;
       case BottomStatusSeverity.error:
-        return Colors.redAccent;
+        return JofColors.dangerText;
     }
   }
 
@@ -70,69 +68,78 @@ class BottomStatusBar extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.all(8.0),
+        padding: const EdgeInsets.fromLTRB(
+          JofSpace.sm,
+          0,
+          JofSpace.sm,
+          JofSpace.sm,
+        ),
         child: MouseRegion(
-          cursor: onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          cursor: onTap != null
+              ? SystemMouseCursors.click
+              : SystemMouseCursors.basic,
           child: GestureDetector(
             onTap: onTap,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(
+                horizontal: JofSpace.md,
+                vertical: JofSpace.sm,
+              ),
               decoration: BoxDecoration(
                 color: _backgroundColor(),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _borderColor()),
+                borderRadius: BorderRadius.circular(JofRadius.sm),
+                border: Border.all(color: _borderColor(), width: 2),
+                boxShadow: JofShadows.outset,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
                     children: [
-                      Icon(icon, size: 18, color: _accentColor()),
-                      const SizedBox(width: 8),
+                      Icon(icon, size: 22, color: _accentColor()),
+                      const SizedBox(width: JofSpace.sm),
                       Expanded(
                         child: Text(
                           message,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: severity == BottomStatusSeverity.info
-                                ? Colors.white70
-                                : _accentColor(),
-                          ),
+                          style: const TextStyle(color: JofColors.text),
                         ),
                       ),
                       if (counterText != null) ...[
-                        const SizedBox(width: 8),
+                        const SizedBox(width: JofSpace.sm),
                         Text(
                           counterText!,
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
+                          style: JofText.caption.copyWith(
+                            color: JofColors.textMuted,
                           ),
                         ),
                       ],
                       if (onClose != null)
                         IconButton(
-                          icon: const Icon(Icons.close, size: 18, color: Colors.white54),
+                          icon: const Icon(
+                            Icons.close,
+                            size: 20,
+                            color: JofColors.textDismiss,
+                          ),
                           onPressed: onClose,
                           tooltip: 'Dismiss',
-                          constraints: const BoxConstraints(),
-                          padding: EdgeInsets.zero,
                         ),
                     ],
                   ),
                   if (progress != null) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: JofSpace.sm),
                     LinearProgressIndicator(
                       value: progress,
-                      backgroundColor: Colors.white10,
+                      color: _accentColor(),
+                      backgroundColor: JofColors.surfaceInput,
                     ),
                   ],
                   if (overallProgress != null) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: JofSpace.xs),
                     LinearProgressIndicator(
                       value: overallProgress,
                       minHeight: 2,
-                      backgroundColor: Colors.white10,
+                      backgroundColor: JofColors.surfaceInput,
                       color: _accentColor().withValues(alpha: 0.6),
                     ),
                   ],

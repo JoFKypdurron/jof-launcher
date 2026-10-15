@@ -86,7 +86,7 @@ void main() {
       expect(find.text('Test Group'), findsOneWidget);
     });
 
-    testWidgets('displays group category as subtitle', (WidgetTester tester) async {
+    testWidgets('displays group category as a tag', (WidgetTester tester) async {
       await tester.pumpWidget(
         createWidget(
           group: testGroup,
@@ -99,7 +99,7 @@ void main() {
         ),
       );
 
-      expect(find.text('modgroups'), findsOneWidget);
+      expect(find.text('MODGROUPS'), findsOneWidget);
     });
 
     testWidgets('shows REQUIRED badge when group is required', (WidgetTester tester) async {
@@ -479,7 +479,7 @@ void main() {
       await tester.tap(find.byType(ExpansionTile));
       await tester.pumpAndSettle();
 
-      expect(find.text('To be Removed'), findsOneWidget);
+      expect(find.text('To be removed'), findsOneWidget);
       expect(find.byIcon(Icons.delete_outline), findsOneWidget);
     });
 
@@ -502,7 +502,7 @@ void main() {
       await tester.tap(find.byType(ExpansionTile));
       await tester.pumpAndSettle();
 
-      expect(find.text('To be Downloaded'), findsOneWidget);
+      expect(find.text('To be downloaded'), findsOneWidget);
       expect(find.byIcon(Icons.download_for_offline), findsOneWidget);
     });
 

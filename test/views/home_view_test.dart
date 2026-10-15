@@ -15,7 +15,7 @@ void main() {
     // In HomeView, the button is shown when !_isLoading && !_isDownloading
     // Or in the first Scaffold when _isSettingsMissing && !_isLoading
     
-    expect(find.text('Launch Game'), findsOneWidget);
+    expect(find.text('LAUNCH GAME'), findsOneWidget);
     
     // Verify it's an ElevatedButton with the correct icon
     expect(find.byIcon(Icons.play_arrow), findsOneWidget);

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'theme/jof_theme.dart';
 import 'views/home_view.dart';
 
 void main() {
@@ -25,48 +26,7 @@ class MyApp extends StatelessWidget {
               child: child!,
             );
           },
-          theme: ThemeData(
-            brightness: Brightness.dark,
-            scaffoldBackgroundColor: const Color(0xFF051720),
-            fontFamily: 'Rajdhani',
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF051720),
-              brightness: Brightness.dark,
-              primary: const Color(0xFFA5D8FF),
-              secondary: const Color(0xFFA5D8FF),
-              surface: const Color(0xFF03273C),
-              onSurface: Colors.white,
-            ),
-            cardTheme: const CardThemeData(
-              color: Color(0xFF03273C),
-              margin: EdgeInsets.zero,
-            ),
-            expansionTileTheme: const ExpansionTileThemeData(
-              backgroundColor: Color(0xFF03273C),
-              collapsedBackgroundColor: Color(0xFF03273C),
-            ),
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFF051720),
-              foregroundColor: Colors.white,
-            ),
-            elevatedButtonTheme: ElevatedButtonThemeData(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF003554),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ),
-            floatingActionButtonTheme: const FloatingActionButtonThemeData(
-              backgroundColor: Color(0xFF003554),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.all(Radius.circular(4)),
-              ),
-            ),
-            useMaterial3: true,
-          ),
+          theme: buildJofTheme(),
           home: const HomeView(),
         );
       },

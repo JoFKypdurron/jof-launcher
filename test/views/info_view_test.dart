@@ -18,17 +18,17 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpAndSettle();
 
-    expect(find.text('Information'), findsOneWidget);
-    expect(find.text('App Name'), findsOneWidget);
+    expect(find.text('INFORMATION'), findsOneWidget);
+    expect(find.text('APP NAME'), findsOneWidget);
     expect(find.text('JoF Launcher Test'), findsOneWidget);
-    expect(find.text('Version'), findsOneWidget);
+    expect(find.text('VERSION'), findsOneWidget);
     expect(find.text('1.2.3'), findsOneWidget);
-    expect(find.text('Build Number'), findsOneWidget);
+    expect(find.text('BUILD NUMBER'), findsOneWidget);
     expect(find.text('456'), findsOneWidget);
-    expect(find.text('Platform'), findsOneWidget);
-    expect(find.text('Platform Version'), findsOneWidget);
-    expect(find.text('Dart Version'), findsOneWidget);
-    expect(find.text('Copy Debug Info'), findsOneWidget);
+    expect(find.text('PLATFORM'), findsOneWidget);
+    expect(find.text('PLATFORM VERSION'), findsOneWidget);
+    expect(find.text('DART VERSION'), findsOneWidget);
+    expect(find.text('COPY DEBUG INFO'), findsOneWidget);
   });
 
   testWidgets('InfoView shows fallbacks when PackageInfo returns empty strings', (WidgetTester tester) async {

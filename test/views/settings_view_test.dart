@@ -23,7 +23,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: SettingsView()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Cloud Backup'), findsNothing);
+    expect(find.text('CLOUD BACKUP'), findsNothing);
     expect(find.text('Enable encrypted cloud backup'), findsNothing);
     expect(find.text('Current Backup ID:'), findsNothing);
   });
@@ -32,7 +32,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: SettingsView()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Automation'), findsOneWidget);
+    expect(find.text('AUTOMATION'), findsOneWidget);
     expect(find.text('Automatically process assets on start'), findsOneWidget);
     expect(find.widgetWithText(SwitchListTile, 'Automatically process assets on start'), findsOneWidget);
   });
@@ -41,7 +41,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: SettingsView()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Cloud Backup'), findsOneWidget);
+    expect(find.text('CLOUD BACKUP'), findsOneWidget);
     expect(find.text('Enable encrypted cloud backup'), findsOneWidget);
     expect(find.widgetWithText(SwitchListTile, 'Enable encrypted cloud backup'), findsOneWidget);
     expect(find.text('Backup .cfg files to Cloud, end to end encrypted'), findsOneWidget);
