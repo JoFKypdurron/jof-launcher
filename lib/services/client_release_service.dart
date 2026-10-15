@@ -8,65 +8,47 @@ import '../models/platform_arch.dart';
 
 /// Resolves which EternalJK client build to install, and where to fetch it.
 ///
-/// The client tarballs live as release assets on the public
-/// `JediofFreedom/JoF_EJK` GitHub repository. Which release to install is
-/// decided remotely rather than baked into the launcher: the jofhub cloud
-/// manifest carries the version inside the description of the `jofclient-*`
-/// assets (e.g. `"JoF EJK Client 1.6.1 (64 Bit)"`), so publishing a new client
-/// is a manifest edit, not a launcher release.
-///
-/// That description is free-form prose rather than a dedicated field, so
-/// parsing is deliberately forgiving and always falls back to
-/// [fallbackVersion] instead of failing the sync.
+/// The client archives live as release assets on the public
+/// `JediofFreedom/JoF_EJK` GitHub repository, and GitHub alone decides which
+/// release to install: the release marked "Latest" for the stable channel,
+/// the newest `X.Y.Z-alpha.N` / `X.Y.Z-beta.N` prerelease for the test
+/// channels. Publishing or rolling back a client is a GitHub release edit, not
+/// a launcher release.
 class ClientReleaseService {
   static const String repositoryOwner = 'JediofFreedom';
   static const String repositoryName = 'JoF_EJK';
 
-  /// Used when no version can be parsed out of the cloud manifest. A reworded
-  /// description must not leave users unable to download a client at all.
+  /// Installed when GitHub cannot be asked which release is current and no
+  /// client is installed yet. An unreachable or rate-limited API must not
+  /// leave a fresh install without a client at all.
   static const String fallbackVersion = '1.6.1';
 
-  /// Matches the first dotted version in a string, e.g. the `1.6.1` in
-  /// `"JoF EJK Client 1.6.1 (64 Bit)"`.
-  static final RegExp _versionPattern = RegExp(r'\b(\d+(?:\.\d+)+)\b');
+  /// How long a resolved latest tag is reused. Long enough that the
+  /// up-to-date check and the install that follows it in the same sync share
+  /// one request of the 60/hour unauthenticated budget; short enough that a
+  /// newly published release is picked up by the next sync.
+  static const Duration latestTagTtl = Duration(minutes: 5);
 
   final http.Client Function()? _httpClientFactory;
 
-  ClientReleaseService({http.Client Function()? httpClientFactory})
-      : _httpClientFactory = httpClientFactory;
+  /// Published digests by `version/assetName`. A release asset never changes
+  /// once published, so a digest is good for the life of the process; caching
+  /// it means the up-to-date check and the install that follows it spend one
+  /// request of the 60/hour unauthenticated budget, not two.
+  final Map<String, String> _sha256Cache = {};
+
+  final Map<ClientChannel, ({String tag, DateTime at})> _latestTagCache = {};
+
+  final DateTime Function() _now;
+
+  ClientReleaseService({
+    http.Client Function()? httpClientFactory,
+    DateTime Function()? now,
+  })  : _httpClientFactory = httpClientFactory,
+        _now = now ?? DateTime.now;
 
   http.Client _createHttpClient() =>
       _httpClientFactory?.call() ?? http.Client();
-
-  /// Extracts the client version from the raw `clientgroups` list of the cloud
-  /// manifest, or null when nothing version-shaped is present.
-  ///
-  /// Takes the raw decoded JSON rather than parsed `AssetGroup`s because
-  /// `CloudService` replaces `clientgroups` with a synthetic placeholder on
-  /// Linux and macOS, discarding the descriptions this reads.
-  static String? parseVersion(List<dynamic>? clientGroupsJson) {
-    if (clientGroupsJson == null) return null;
-
-    for (final group in clientGroupsJson) {
-      if (group is! Map) continue;
-      final assets = group['assets'];
-      if (assets is! List) continue;
-
-      for (final asset in assets) {
-        if (asset is! Map) continue;
-        // Only the jofclient payload carries the client version; other assets
-        // in the group (SDL2.dll, steam_api.dll, ...) have their own versions.
-        final name = asset['name']?.toString() ?? '';
-        if (!name.startsWith('jofclient-')) continue;
-
-        final match =
-            _versionPattern.firstMatch(asset['description']?.toString() ?? '');
-        if (match != null) return match.group(1);
-      }
-    }
-
-    return null;
-  }
 
   /// The release asset filename for a Linux [arch].
   static String linuxAssetName(LinuxSystemArch arch) {
@@ -81,6 +63,14 @@ class ClientReleaseService {
     return switch (arch) {
       MacosSystemArch.amd => 'JoF-macos-x86_64.tar.gz',
       MacosSystemArch.arm => 'JoF-macos-arm64.tar.gz',
+    };
+  }
+
+  /// The release asset filename for a Windows [arch].
+  static String windowsAssetName(WindowsSystemArch arch) {
+    return switch (arch) {
+      WindowsSystemArch.bit32 => 'JoF-windows-x86.zip',
+      WindowsSystemArch.bit64 => 'JoF-windows-x86_64.zip',
     };
   }
 
@@ -106,6 +96,14 @@ class ClientReleaseService {
   }
 
   @visibleForTesting
+  static String latestReleaseApiUrl() {
+    return Uri.https(
+      'api.github.com',
+      '/repos/$repositoryOwner/$repositoryName/releases/latest',
+    ).toString();
+  }
+
+  @visibleForTesting
   static String releasesApiUrl() {
     return Uri.https(
       'api.github.com',
@@ -123,15 +121,20 @@ class ClientReleaseService {
   /// `GET .../releases` response, or null when nothing matches.
   ///
   /// Pure and synchronous so channel-selection logic is testable without
-  /// mocking HTTP. Stable has no prerelease tag shape to select — callers
-  /// keep using the manifest-driven version for that channel — so this
-  /// always returns null for it.
+  /// mocking HTTP. Stable has no prerelease tag shape to select (it uses the
+  /// release GitHub marks as latest instead), so this always returns null for
+  /// it.
   @visibleForTesting
   static String? selectLatestTag(
+          List<dynamic> releasesJson, ClientChannel channel) =>
+      _selectLatestRelease(releasesJson, channel)?['tag_name']?.toString();
+
+  static Map<dynamic, dynamic>? _selectLatestRelease(
       List<dynamic> releasesJson, ClientChannel channel) {
     final segment = channel.prereleaseTagSegment;
     if (segment == null) return null;
 
+    Map<dynamic, dynamic>? best;
     String? bestTag;
     List<int>? bestBase;
     int? bestBuild;
@@ -153,13 +156,14 @@ class ClientReleaseService {
       if (bestTag == null ||
           _compareVersionParts(base, bestBase!) > 0 ||
           (_compareVersionParts(base, bestBase) == 0 && build > bestBuild!)) {
+        best = release;
         bestTag = tag;
         bestBase = base;
         bestBuild = build;
       }
     }
 
-    return bestTag;
+    return best;
   }
 
   /// Compares two dotted version part lists component by component,
@@ -182,6 +186,10 @@ class ClientReleaseService {
   /// must not block an otherwise healthy download, so the caller simply skips
   /// verification in that case.
   Future<String?> fetchAssetSha256(String version, String assetName) async {
+    final cacheKey = '$version/$assetName';
+    final cached = _sha256Cache[cacheKey];
+    if (cached != null) return cached;
+
     final client = _createHttpClient();
     try {
       final response = await client.get(
@@ -208,7 +216,7 @@ class ClientReleaseService {
         if (digest == null) return null;
         const prefix = 'sha256:';
         if (!digest.startsWith(prefix)) return null;
-        return digest.substring(prefix.length);
+        return _sha256Cache[cacheKey] = digest.substring(prefix.length);
       }
 
       return null;
@@ -219,20 +227,42 @@ class ClientReleaseService {
     }
   }
 
-  /// The newest published tag on [channel], or null for [ClientChannel.stable]
-  /// (which has no such tag shape) and whenever the lookup fails.
+  /// Remembers the digests of every asset on [release], so the
+  /// [fetchAssetSha256] that follows a tag lookup needs no request of its own.
+  void _cacheDigests(String tag, Map<dynamic, dynamic> release) {
+    final assets = release['assets'];
+    if (assets is! List) return;
+    for (final asset in assets) {
+      if (asset is! Map) continue;
+      final name = asset['name']?.toString();
+      final digest = asset['digest']?.toString();
+      const prefix = 'sha256:';
+      if (name == null || digest == null || !digest.startsWith(prefix)) continue;
+      _sha256Cache['$tag/$name'] = digest.substring(prefix.length);
+    }
+  }
+
+  /// The tag of the release to install on [channel], or null when GitHub
+  /// cannot be asked.
+  ///
+  /// Stable takes the release GitHub marks as "Latest", which is never a
+  /// draft or prerelease and which maintainers can move back to roll a bad
+  /// release back. Alpha and beta pick the newest matching prerelease tag.
   ///
   /// Degrades to null rather than throwing for the same reason as
   /// [fetchAssetSha256]: the unauthenticated GitHub API allows only 60
-  /// requests/hour, and a rate limit must not fail the sync. Callers fall
-  /// back to the stable version resolution in that case.
+  /// requests/hour, and a rate limit must not fail the sync.
   Future<String?> fetchLatestTag(ClientChannel channel) async {
-    if (channel.prereleaseTagSegment == null) return null;
+    final cached = _latestTagCache[channel];
+    if (cached != null && _now().difference(cached.at) < latestTagTtl) {
+      return cached.tag;
+    }
 
+    final isStable = channel.prereleaseTagSegment == null;
     final client = _createHttpClient();
     try {
       final response = await client.get(
-        Uri.parse(releasesApiUrl()),
+        Uri.parse(isStable ? latestReleaseApiUrl() : releasesApiUrl()),
         headers: const {
           'Accept': 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
@@ -242,9 +272,15 @@ class ClientReleaseService {
       if (response.statusCode != 200) return null;
 
       final body = jsonDecode(response.body);
-      if (body is! List) return null;
+      final release = isStable
+          ? (body is Map ? body : null)
+          : (body is List ? _selectLatestRelease(body, channel) : null);
+      final tag = release?['tag_name']?.toString();
+      if (release == null || tag == null || tag.isEmpty) return null;
 
-      return selectLatestTag(body, channel);
+      _cacheDigests(tag, release);
+      _latestTagCache[channel] = (tag: tag, at: _now());
+      return tag;
     } catch (_) {
       return null;
     } finally {

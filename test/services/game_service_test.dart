@@ -4,6 +4,7 @@ import 'package:joflauncher/services/client_release_service.dart';
 import 'package:joflauncher/services/game_service.dart';
 import 'package:joflauncher/services/system_arch_service.dart';
 import 'package:joflauncher/models/asset_group.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -29,6 +30,23 @@ void main() {
           'eternaljk.x86');
       expect(GameService.linuxBinaryName(LinuxSystemArch.bit64),
           'eternaljk.x86_64');
+    });
+
+    // Verified against the published zips: `JoF-windows-x86.zip` unpacks
+    // `GameData/eternaljk.x86.exe`, `JoF-windows-x86_64.zip`
+    // `GameData/eternaljk.x86_64.exe`.
+    test('Windows executable names match the published zip contents', () {
+      expect(GameService.windowsExecutableName(WindowsSystemArch.bit32),
+          'eternaljk.x86.exe');
+      expect(GameService.windowsExecutableName(WindowsSystemArch.bit64),
+          'eternaljk.x86_64.exe');
+    });
+
+    test('Windows launches the 64-bit client by default', () async {
+      final info = await GameService(platformOverride: 'windows')
+          .getExecutableInfo(p.join('games', 'GameData'));
+      expect(info?.executablePath,
+          p.join('games', 'GameData', 'eternaljk.x86_64.exe'));
     });
 
     // The bug this guards against: downloading `JoF-macos-arm64.tar.gz` and

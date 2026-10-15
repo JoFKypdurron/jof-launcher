@@ -27,6 +27,17 @@ void main() {
       );
     });
 
+    test('windowsClientZipUrl maps arch to expected URLs', () {
+      expect(
+        CloudService.windowsClientZipUrl('1.6.1', WindowsSystemArch.bit32),
+        'https://github.com/JediofFreedom/JoF_EJK/releases/download/1.6.1/JoF-windows-x86.zip',
+      );
+      expect(
+        CloudService.windowsClientZipUrl('1.6.1', WindowsSystemArch.bit64),
+        'https://github.com/JediofFreedom/JoF_EJK/releases/download/1.6.1/JoF-windows-x86_64.zip',
+      );
+    });
+
     test('version from the manifest is what ends up in the URL', () {
       expect(
         CloudService.macosClientTarGzUrl('1.7.0', MacosSystemArch.arm),

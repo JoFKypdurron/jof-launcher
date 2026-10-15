@@ -57,6 +57,15 @@ class GameService {
     };
   }
 
+  /// The executable the Windows client zip unpacks to for [arch].
+  @visibleForTesting
+  static String windowsExecutableName(WindowsSystemArch arch) {
+    return switch (arch) {
+      WindowsSystemArch.bit32 => 'eternaljk.x86.exe',
+      WindowsSystemArch.bit64 => 'eternaljk.x86_64.exe',
+    };
+  }
+
   /// Resolves the actual binary inside a macOS `.app`, preferring the
   /// Info.plist `CFBundleExecutable` and falling back to the bundle name.
   @visibleForTesting
@@ -96,7 +105,8 @@ class GameService {
     String workingDirectory = gameDataPath;
 
     if (_isWindows) {
-      executablePath = p.join(gameDataPath, 'eternaljk.x86.exe');
+      executablePath = p.join(
+          gameDataPath, windowsExecutableName(_systemArch.resolveWindows()));
     } else if (_isMacOS) {
       // Resolved the same way the download does, so the bundle we launch is
       // the one that was installed: `eternaljk.arm64.app` for Apple Silicon,

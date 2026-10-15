@@ -8,109 +8,7 @@ import 'package:joflauncher/models/client_channel.dart';
 import 'package:joflauncher/models/platform_arch.dart';
 import 'package:joflauncher/services/client_release_service.dart';
 
-/// Shaped after the real api.jofhub.eu `clientgroups` payload: the version
-/// lives in the description of the jofclient pk3, alongside assets that carry
-/// unrelated versions of their own.
-List<dynamic> manifestClientGroups({
-  String description = 'JoF EJK Client 1.6.1 (64 Bit)',
-  String assetName = 'jofclient-win-x86_64.pk3',
-}) {
-  return [
-    {
-      'id': 16,
-      'name': 'JoF EternalJK 64bit',
-      'executable': 'eternaljk.x86_64.exe',
-      'assets': [
-        {
-          'name': 'SDL2.x86_64.dll',
-          'description': 'SDL 2.0.14 runtime',
-        },
-        {
-          'name': assetName,
-          'description': description,
-        },
-      ],
-    },
-  ];
-}
-
 void main() {
-  group('ClientReleaseService.parseVersion', () {
-    test('reads the version out of the jofclient asset description', () {
-      expect(ClientReleaseService.parseVersion(manifestClientGroups()), '1.6.1');
-    });
-
-    test('ignores versions on non-jofclient assets in the same group', () {
-      // SDL2's "2.0.14" must not win over the client's own version.
-      final groups = manifestClientGroups(description: 'JoF EJK Client 1.6.1');
-      expect(ClientReleaseService.parseVersion(groups), '1.6.1');
-    });
-
-    // The live 32-bit group lists a versionless `jofclient-assets.pk3` ahead of
-    // the versioned client pk3; the scan must keep going rather than give up on
-    // the first jofclient asset it meets.
-    test('skips a versionless jofclient asset listed first', () {
-      expect(
-        ClientReleaseService.parseVersion([
-          {
-            'name': 'JoF EternalJK 32bit',
-            'assets': [
-              {
-                'name': 'jofclient-assets.pk3',
-                'description': 'JoF Client Assets',
-              },
-              {
-                'name': 'jofclient-win-x86.pk3',
-                'description': 'JoF EJK Client 1.6.1 (32 Bit)',
-              },
-            ],
-          },
-        ]),
-        '1.6.1',
-      );
-    });
-
-    test('returns null when no jofclient asset is present', () {
-      final groups = manifestClientGroups(assetName: 'steam_api.dll');
-      expect(ClientReleaseService.parseVersion(groups), isNull);
-    });
-
-    test('returns null when the description carries no version', () {
-      final groups =
-          manifestClientGroups(description: 'JoF EternalJK client payload');
-      expect(ClientReleaseService.parseVersion(groups), isNull);
-    });
-
-    test('returns null on null or empty clientgroups', () {
-      expect(ClientReleaseService.parseVersion(null), isNull);
-      expect(ClientReleaseService.parseVersion([]), isNull);
-    });
-
-    test('tolerates malformed entries rather than throwing', () {
-      expect(
-        ClientReleaseService.parseVersion([
-          'not a map',
-          {'assets': 'not a list'},
-          {'assets': [null, 42]},
-        ]),
-        isNull,
-      );
-    });
-
-    test('handles two- and four-part versions', () {
-      expect(
-        ClientReleaseService.parseVersion(
-            manifestClientGroups(description: 'JoF EJK Client 2.0 (64 Bit)')),
-        '2.0',
-      );
-      expect(
-        ClientReleaseService.parseVersion(manifestClientGroups(
-            description: 'JoF EJK Client 1.6.1.2 (64 Bit)')),
-        '1.6.1.2',
-      );
-    });
-  });
-
   group('ClientReleaseService URLs', () {
     test('builds GitHub release download URLs', () {
       expect(
@@ -128,12 +26,23 @@ void main() {
           'JoF-macos-x86_64.tar.gz');
       expect(ClientReleaseService.macosAssetName(MacosSystemArch.arm),
           'JoF-macos-arm64.tar.gz');
+      expect(ClientReleaseService.windowsAssetName(WindowsSystemArch.bit32),
+          'JoF-windows-x86.zip');
+      expect(ClientReleaseService.windowsAssetName(WindowsSystemArch.bit64),
+          'JoF-windows-x86_64.zip');
     });
 
     test('release API URL targets the tagged release', () {
       expect(
         ClientReleaseService.releaseApiUrl('1.6.1'),
         'https://api.github.com/repos/JediofFreedom/JoF_EJK/releases/tags/1.6.1',
+      );
+    });
+
+    test('latest release API URL targets the release marked Latest', () {
+      expect(
+        ClientReleaseService.latestReleaseApiUrl(),
+        'https://api.github.com/repos/JediofFreedom/JoF_EJK/releases/latest',
       );
     });
 
@@ -294,13 +203,87 @@ void main() {
       expect(await service.fetchLatestTag(ClientChannel.alpha), isNull);
     });
 
-    test('returns null immediately for the stable channel', () async {
+    test('stable takes the release GitHub marks as Latest', () async {
+      final service = ClientReleaseService(
+        httpClientFactory: () => MockClient((request) async {
+          expect(request.url.toString(),
+              ClientReleaseService.latestReleaseApiUrl());
+          return http.Response(
+              jsonEncode({'tag_name': '1.7.0', 'prerelease': false}), 200);
+        }),
+      );
+
+      expect(await service.fetchLatestTag(ClientChannel.stable), '1.7.0');
+    });
+
+    test('stable returns null when no release is marked Latest', () async {
       final service = ClientReleaseService(
         httpClientFactory: () =>
-            MockClient((request) async => throw Exception('must not be called')),
+            MockClient((request) async => http.Response('not found', 404)),
       );
 
       expect(await service.fetchLatestTag(ClientChannel.stable), isNull);
+    });
+
+    // One request serves both the tag and the digest, so a sync spends one
+    // call of the 60/hour budget rather than two.
+    test('digests from the tag lookup answer fetchAssetSha256', () async {
+      var calls = 0;
+      final service = ClientReleaseService(
+        httpClientFactory: () => MockClient((request) async {
+          calls++;
+          return http.Response(
+            jsonEncode({
+              'tag_name': '1.7.0',
+              'assets': [
+                {
+                  'name': 'JoF-windows-x86_64.zip',
+                  'digest': 'sha256:abc123',
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+
+      expect(await service.fetchLatestTag(ClientChannel.stable), '1.7.0');
+      expect(await service.fetchAssetSha256('1.7.0', 'JoF-windows-x86_64.zip'),
+          'abc123');
+      expect(calls, 1);
+    });
+
+    test('reuses a resolved tag within the TTL and refetches after it',
+        () async {
+      var now = DateTime(2026, 10, 15, 12);
+      var calls = 0;
+      final service = ClientReleaseService(
+        now: () => now,
+        httpClientFactory: () => MockClient((request) async {
+          calls++;
+          return http.Response(jsonEncode({'tag_name': '1.7.$calls'}), 200);
+        }),
+      );
+
+      expect(await service.fetchLatestTag(ClientChannel.stable), '1.7.1');
+      now = now.add(const Duration(minutes: 4));
+      expect(await service.fetchLatestTag(ClientChannel.stable), '1.7.1');
+      now = now.add(ClientReleaseService.latestTagTtl);
+      expect(await service.fetchLatestTag(ClientChannel.stable), '1.7.2');
+      expect(calls, 2);
+    });
+
+    test('a failed lookup is not cached', () async {
+      var fail = true;
+      final service = ClientReleaseService(
+        httpClientFactory: () => MockClient((request) async => fail
+            ? http.Response('rate limited', 403)
+            : http.Response(jsonEncode({'tag_name': '1.7.0'}), 200)),
+      );
+
+      expect(await service.fetchLatestTag(ClientChannel.stable), isNull);
+      fail = false;
+      expect(await service.fetchLatestTag(ClientChannel.stable), '1.7.0');
     });
   });
 }

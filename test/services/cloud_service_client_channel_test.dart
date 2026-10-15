@@ -8,27 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:joflauncher/services/client_release_service.dart';
 import 'package:joflauncher/services/cloud_service.dart';
 
-/// A minimal, well-formed `getclouddata` body carrying a manifest client
-/// version, shaped like the real api.jofhub.eu response.
-String manifestBody({String version = '1.6.1'}) {
-  return jsonEncode({
-    'status': 'OK',
-    'data': {
-      'clientgroups': [
-        {
-          'id': 16,
-          'assets': [
-            {
-              'name': 'jofclient-win-x86_64.pk3',
-              'description': 'JoF EJK Client $version (64 Bit)',
-            },
-          ],
-        },
-      ],
-    },
-  });
-}
-
 String releasesBody() {
   return jsonEncode([
     {'tag_name': '1.6.1', 'draft': false, 'prerelease': false},
@@ -39,11 +18,29 @@ String releasesBody() {
   ]);
 }
 
-CloudService serviceReturning(Map<String, http.Response> byHost) {
+String latestBody({String tag = '1.7.0'}) {
+  return jsonEncode({'tag_name': tag, 'draft': false, 'prerelease': false});
+}
+
+/// Answers GitHub's `releases/latest` with [latest] and the release list with
+/// [releases]. The jofhub manifest is never consulted for the client version,
+/// so any request to it fails the test.
+CloudService serviceReturning({
+  http.Response? latest,
+  http.Response? releases,
+}) {
   return CloudService(
     httpClientFactory: () => MockClient((request) async {
-      final response = byHost[request.url.host];
-      return response ?? http.Response('not found', 404);
+      if (request.url.host == 'api.jofhub.eu') {
+        throw StateError('client version must not come from jofhub');
+      }
+      if (request.url.path.endsWith('/releases/latest')) {
+        return latest ?? http.Response('not found', 404);
+      }
+      if (request.url.path.endsWith('/releases')) {
+        return releases ?? http.Response('not found', 404);
+      }
+      return http.Response('not found', 404);
     }),
   );
 }
@@ -54,67 +51,80 @@ void main() {
   group('CloudService.resolveClientVersion channel awareness', () {
     test('alpha channel resolves to the newest alpha tag', () async {
       SharedPreferences.setMockInitialValues({'client_channel': 'alpha'});
-      final cloud = serviceReturning({
-        'api.jofhub.eu': http.Response(manifestBody(), 200),
-        'api.github.com': http.Response(releasesBody(), 200),
-      });
+      final cloud = serviceReturning(
+          releases: http.Response(releasesBody(), 200));
 
       expect(await cloud.resolveClientVersion(), '1.6.1-alpha.59');
     });
 
     test('beta channel resolves to the newest beta tag', () async {
       SharedPreferences.setMockInitialValues({'client_channel': 'beta'});
-      final cloud = serviceReturning({
-        'api.jofhub.eu': http.Response(manifestBody(), 200),
-        'api.github.com': http.Response(releasesBody(), 200),
-      });
+      final cloud = serviceReturning(
+          releases: http.Response(releasesBody(), 200));
 
       expect(await cloud.resolveClientVersion(), '1.6.1-beta.31');
     });
 
-    test('stable channel keeps the manifest version', () async {
+    test('stable channel takes the GitHub release marked Latest', () async {
       SharedPreferences.setMockInitialValues({'client_channel': 'stable'});
-      final cloud = serviceReturning({
-        'api.jofhub.eu': http.Response(manifestBody(version: '1.7.0'), 200),
-        'api.github.com': http.Response(releasesBody(), 200),
-      });
+      final cloud = serviceReturning(latest: http.Response(latestBody(), 200));
 
       expect(await cloud.resolveClientVersion(), '1.7.0');
     });
 
     test('no persisted channel behaves like stable', () async {
       SharedPreferences.setMockInitialValues({});
-      final cloud = serviceReturning({
-        'api.jofhub.eu': http.Response(manifestBody(version: '1.7.0'), 200),
-        'api.github.com': http.Response(releasesBody(), 200),
-      });
+      final cloud = serviceReturning(latest: http.Response(latestBody(), 200));
 
       expect(await cloud.resolveClientVersion(), '1.7.0');
     });
 
-    test(
-        'a rate-limited GitHub releases call on the alpha channel degrades to the manifest version',
+    // Callers keep whatever client is installed rather than guessing.
+    test('a rate-limited GitHub API resolves to null on every channel',
         () async {
-      SharedPreferences.setMockInitialValues({'client_channel': 'alpha'});
-      final cloud = serviceReturning({
-        'api.jofhub.eu': http.Response(manifestBody(version: '1.7.0'), 200),
-        'api.github.com': http.Response('rate limited', 403),
-      });
+      for (final channel in ['stable', 'beta', 'alpha']) {
+        SharedPreferences.setMockInitialValues({'client_channel': channel});
+        final cloud = serviceReturning(
+          latest: http.Response('rate limited', 403),
+          releases: http.Response('rate limited', 403),
+        );
 
-      expect(await cloud.resolveClientVersion(), '1.7.0');
+        expect(await cloud.resolveClientVersion(), isNull, reason: channel);
+      }
+    });
+  });
+
+  group('CloudService.clientMarkerMatches with an unconfirmed version', () {
+    const fallback = ClientTarget(
+      platformName: 'Windows',
+      version: ClientReleaseService.fallbackVersion,
+      assetName: 'JoF-windows-x86_64.zip',
+      versionConfirmed: false,
+    );
+
+    // Not knowing the latest release must not downgrade a newer stable client
+    // or replace an alpha build with the pinned fallback.
+    test('keeps any installed version of the same build', () {
+      for (final version in ['1.7.0', '1.6.1-alpha.59']) {
+        expect(
+          CloudService.clientMarkerMatches(
+            {'version': version, 'asset': 'JoF-windows-x86_64.zip'},
+            fallback,
+          ),
+          isTrue,
+          reason: version,
+        );
+      }
     });
 
-    test(
-        'a rate-limited GitHub releases call on the alpha channel degrades to the fallback version when the manifest is also unavailable',
-        () async {
-      SharedPreferences.setMockInitialValues({'client_channel': 'alpha'});
-      final cloud = serviceReturning({
-        'api.jofhub.eu': http.Response('nope', 500),
-        'api.github.com': http.Response('rate limited', 403),
-      });
-
+    test('still installs when the build itself differs', () {
       expect(
-          await cloud.resolveClientVersion(), ClientReleaseService.fallbackVersion);
+        CloudService.clientMarkerMatches(
+          {'version': '1.7.0', 'asset': 'JoF-windows-x86.zip'},
+          fallback,
+        ),
+        isFalse,
+      );
     });
   });
 }

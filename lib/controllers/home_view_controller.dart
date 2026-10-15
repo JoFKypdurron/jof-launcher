@@ -377,7 +377,13 @@ class HomeViewController {
             (status == AssetStatus.downloaded || status == AssetStatus.needsUpdate);
       }).toList();
 
-      if (assetsToDownload.isNotEmpty || assetsToDelete.isNotEmpty) {
+      // A new client release has to be installed even when no asset changed.
+      final clientOutdated = _cloudService.supportsClientFiles &&
+          !await _cloudService.isClientUpToDate(gameDataPath);
+
+      if (assetsToDownload.isNotEmpty ||
+          assetsToDelete.isNotEmpty ||
+          clientOutdated) {
         isSyncing = true;
         syncProgress = 0;
         syncStatus = 'Starting sync...';

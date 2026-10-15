@@ -33,17 +33,11 @@ class CloudData {
   final List<AssetGroup> assetGroups;
   final List<AssetGroup> otherGroups;
 
-  /// EternalJK release to install, as advertised by the manifest. Null when the
-  /// manifest carried nothing parseable; callers fall back to
-  /// [ClientReleaseService.fallbackVersion].
-  final String? clientVersion;
-
   CloudData({
     required this.clientGroups,
     required this.modGroups,
     required this.assetGroups,
     required this.otherGroups,
-    this.clientVersion,
   });
 
   List<AssetGroup> get allGroups => [...clientGroups, ...modGroups, ...assetGroups, ...otherGroups];
@@ -108,6 +102,34 @@ class CloudData {
       _resolveRecursive(dependentGroup, resolved);
     }
   }
+}
+
+/// One EternalJK client build: a release version and the asset for this
+/// platform and architecture.
+class ClientTarget {
+  /// Shown in progress messages, e.g. "Downloading Windows files".
+  final String platformName;
+  final String version;
+  final String assetName;
+
+  /// The digest GitHub publishes for the asset, or null when it could not be
+  /// looked up.
+  final String? sha256;
+
+  /// False when GitHub could not say which release is current and [version]
+  /// is [ClientReleaseService.fallbackVersion]. Such a target only installs a
+  /// client where none exists; it never replaces one.
+  final bool versionConfirmed;
+
+  const ClientTarget({
+    required this.platformName,
+    required this.version,
+    required this.assetName,
+    this.sha256,
+    this.versionConfirmed = true,
+  });
+
+  String get url => ClientReleaseService.downloadUrl(version, assetName);
 }
 
 class CloudService {
@@ -261,22 +283,19 @@ class CloudService {
           List<AssetGroup> assetGroups = [];
           List<AssetGroup> otherGroups = [];
 
-          // Read before the Linux/macOS override below replaces clientgroups
-          // with a placeholder, which would discard the descriptions the
-          // version lives in.
-          final clientVersion =
-              ClientReleaseService.parseVersion(data['clientgroups'] as List?);
-
           if (data['clientgroups'] != null) {
             clientGroups = (data['clientgroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
           }
 
-          if (!kIsWeb && (io.Platform.isLinux || io.Platform.isMacOS)) {
+          // The client itself comes from GitHub releases (see
+          // [syncClientFiles]), so the jofhub client files are never synced;
+          // only this placeholder represents the client in the asset list.
+          if (supportsClientFiles) {
             clientGroups = [
               AssetGroup(
                 id: -1,
                 name: 'JoF EternalJK',
-                description: 'Required game client for Linux/macOS',
+                description: 'Required game client',
                 category: 'CLIENT',
                 targetFolder: '',
                 assets: [],
@@ -299,7 +318,6 @@ class CloudService {
             modGroups: modGroups,
             assetGroups: assetGroups,
             otherGroups: otherGroups,
-            clientVersion: clientVersion,
           );
 
           _cachedCloudData = cloudData;
@@ -693,53 +711,135 @@ class CloudService {
     return defaultPath;
   }
 
-  Future<void> downloadAndExtractLinuxFiles(
-    String gameDataPath, {
-    Function(String name, double progress)? onProgress,
-    void Function(String status)? onStatus,
-    bool Function()? isCancelled,
-  }) async {
-    final arch = await _systemArch.resolveLinux();
+  /// Name of the file, at the root of an install, recording which client
+  /// release was extracted there.
+  static const String clientMarkerFileName = '.jof-client.json';
 
-    final version = await resolveClientVersion();
-    final assetName = ClientReleaseService.linuxAssetName(arch);
+  /// Whether this platform installs the EternalJK client from GitHub releases.
+  bool get supportsClientFiles =>
+      !kIsWeb &&
+      (io.Platform.isLinux || io.Platform.isMacOS || io.Platform.isWindows);
 
-    await _downloadAndExtractTarGz(
-      ClientReleaseService.downloadUrl(version, assetName),
-      'jof_linux_',
-      'jof-linux-${arch.persistedValue}.tar.gz',
-      'Linux',
-      gameDataPath,
-      expectedSha256:
-          await _clientRelease.fetchAssetSha256(version, assetName),
-      onProgress: onProgress,
-      onStatus: onStatus,
-      isCancelled: isCancelled,
+  /// The client release this machine should have installed: the version for
+  /// the selected channel, in the build for this platform and architecture.
+  ///
+  /// [ClientTarget.sha256] is null when the GitHub API could not be reached;
+  /// see [ClientReleaseService.fetchAssetSha256].
+  Future<ClientTarget> resolveClientTarget() async {
+    final String platformName;
+    final String assetName;
+    if (io.Platform.isLinux) {
+      platformName = 'Linux';
+      assetName = ClientReleaseService.linuxAssetName(
+          await _systemArch.resolveLinux());
+    } else if (io.Platform.isMacOS) {
+      final arch = await _systemArch.resolveMacos();
+      if (arch == null) {
+        throw Exception('Could not auto-detect macOS CPU architecture. Please select it in Settings.');
+      }
+      platformName = 'MacOS';
+      assetName = ClientReleaseService.macosAssetName(arch);
+    } else if (io.Platform.isWindows) {
+      platformName = 'Windows';
+      assetName =
+          ClientReleaseService.windowsAssetName(_systemArch.resolveWindows());
+    } else {
+      throw UnsupportedError(
+          'No EternalJK client build for ${io.Platform.operatingSystem}.');
+    }
+
+    final latest = await resolveClientVersion();
+    final version = latest ?? ClientReleaseService.fallbackVersion;
+    return ClientTarget(
+      platformName: platformName,
+      version: version,
+      assetName: assetName,
+      sha256: await _clientRelease.fetchAssetSha256(version, assetName),
+      versionConfirmed: latest != null,
     );
   }
 
-  Future<void> downloadAndExtractMacosFiles(
-    String gameDataPath, {
+  /// Whether [installRoot] already holds [target] (resolved when omitted), so
+  /// a sync can skip downloading a client archive it already has.
+  ///
+  /// Never throws: anything unreadable or unresolvable counts as out of date,
+  /// which costs at worst one redundant download.
+  Future<bool> isClientUpToDate(String installRoot,
+      [ClientTarget? target]) async {
+    try {
+      final marker = io.File(p.join(installRoot, clientMarkerFileName));
+      if (!await marker.exists()) return false;
+      final decoded = jsonDecode(await marker.readAsString());
+      if (decoded is! Map) return false;
+
+      target ??= await resolveClientTarget();
+      if (!clientMarkerMatches(decoded, target)) return false;
+
+      // The marker says what was extracted; a file deleted since (by the
+      // user, or an antivirus quarantining the exe) still needs reinstalling.
+      final files = decoded['files'];
+      if (files is! List || files.isEmpty) return false;
+      for (final relative in files) {
+        if (relative is! String) return false;
+        if (!await io.File(p.join(installRoot, relative)).exists()) {
+          return false;
+        }
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Whether a decoded install marker describes [target].
+  ///
+  /// The published sha256 is the authority when both sides have one, so a
+  /// release re-uploaded under the same tag is still picked up. Without it
+  /// (the GitHub API was unreachable or rate-limited, now or at install time)
+  /// the version and asset name have to do.
+  ///
+  /// An unconfirmed target matches any installed version: not knowing the
+  /// current release is no reason to replace the client with the pinned
+  /// fallback, which would downgrade it, or swap an alpha build for stable.
+  @visibleForTesting
+  static bool clientMarkerMatches(Map<dynamic, dynamic> marker, ClientTarget target) {
+    if (marker['asset'] != target.assetName) return false;
+    if (!target.versionConfirmed) return true;
+    if (marker['version'] != target.version) return false;
+    final installedSha = marker['sha256'];
+    if (target.sha256 != null && installedSha is String) {
+      return installedSha.toLowerCase() == target.sha256!.toLowerCase();
+    }
+    return true;
+  }
+
+  /// Installs the EternalJK client into [installRoot], unless it, or
+  /// [currentInstallPath] when given, already holds the current release.
+  ///
+  /// [currentInstallPath] is for staging while the game runs: the live install
+  /// may already be current even though the staging directory is empty.
+  Future<void> syncClientFiles(
+    String installRoot, {
+    String? currentInstallPath,
     Function(String name, double progress)? onProgress,
     void Function(String status)? onStatus,
     bool Function()? isCancelled,
   }) async {
-    final arch = await _systemArch.resolveMacos();
-    if (arch == null) {
-      throw Exception('Could not auto-detect macOS CPU architecture. Please select it in Settings.');
+    if (kIsWeb) {
+      throw Exception('Client file downloading is not supported on the web version.');
     }
 
-    final version = await resolveClientVersion();
-    final assetName = ClientReleaseService.macosAssetName(arch);
+    final target = await resolveClientTarget();
+    for (final root in {installRoot, ?currentInstallPath}) {
+      if (await isClientUpToDate(root, target)) {
+        onProgress?.call('${target.platformName} client is up to date', 1.0);
+        return;
+      }
+    }
 
-    await _downloadAndExtractTarGz(
-      ClientReleaseService.downloadUrl(version, assetName),
-      'jof_macos_',
-      'jof-macos-${arch.persistedValue}.tar.gz',
-      'MacOS',
-      gameDataPath,
-      expectedSha256:
-          await _clientRelease.fetchAssetSha256(version, assetName),
+    await _downloadAndExtractClient(
+      target,
+      installRoot,
       onProgress: onProgress,
       onStatus: onStatus,
       isCancelled: isCancelled,
@@ -758,67 +858,43 @@ class CloudService {
         version, ClientReleaseService.macosAssetName(arch));
   }
 
-  /// The EternalJK release to install.
-  ///
-  /// On the `beta`/`alpha` channels (see [ClientChannel]), this resolves the
-  /// newest matching GitHub prerelease tag directly, bypassing the manifest
-  /// entirely. A failed prerelease lookup (unreachable or rate-limited API)
-  /// degrades to the stable resolution below rather than failing the sync —
-  /// users on a test channel still get a working client, just not the very
-  /// latest build.
-  ///
-  /// On the `stable` channel (the default), the version comes from the cloud
-  /// manifest when available, falling back to
-  /// [ClientReleaseService.fallbackVersion] when the manifest is unreachable
-  /// or its description no longer contains a parseable version, so a wording
-  /// change upstream degrades to a pinned client rather than a broken
-  /// download.
   @visibleForTesting
-  Future<String> resolveClientVersion() async {
+  static String windowsClientZipUrl(String version, WindowsSystemArch arch) {
+    return ClientReleaseService.downloadUrl(
+        version, ClientReleaseService.windowsAssetName(arch));
+  }
+
+  /// The EternalJK release to install for the selected [ClientChannel], or
+  /// null when GitHub cannot be asked (unreachable or rate-limited).
+  ///
+  /// See [ClientReleaseService.fetchLatestTag] for how each channel picks its
+  /// release.
+  @visibleForTesting
+  Future<String?> resolveClientVersion() async {
     final channel = ClientChannelCodec.tryParse(
             await SettingsService().getClientChannel()) ??
         ClientChannel.stable;
-
-    if (channel != ClientChannel.stable) {
-      final tag = await _clientRelease.fetchLatestTag(channel);
-      if (tag != null && tag.isNotEmpty) return tag;
-    }
-
-    try {
-      final cloudData = _cachedCloudData ?? await fetchCloudData();
-      final version = cloudData.clientVersion;
-      if (version != null && version.isNotEmpty) return version;
-    } catch (_) {
-      // Fall through to the pinned version below.
-    }
-    return ClientReleaseService.fallbackVersion;
+    return _clientRelease.fetchLatestTag(channel);
   }
 
-  Future<void> _downloadAndExtractTarGz(
-    String url,
-    String tempPrefix,
-    String tarGzFileName,
-    String platformName,
-    String gameDataPath, {
-    String? expectedSha256,
+  Future<void> _downloadAndExtractClient(
+    ClientTarget target,
+    String installRoot, {
     Function(String name, double progress)? onProgress,
     void Function(String status)? onStatus,
     bool Function()? isCancelled,
   }) async {
-    if (kIsWeb) {
-      throw Exception('$platformName file downloading is not supported on the web version.');
-    }
-
-    final tempDir = await io.Directory.systemTemp.createTemp(tempPrefix);
-    final tarGzPath = p.join(tempDir.path, tarGzFileName);
+    final platformName = target.platformName;
+    final tempDir = await io.Directory.systemTemp.createTemp('jof_client_');
+    final archivePath = p.join(tempDir.path, target.assetName);
 
     try {
       onProgress?.call('Downloading $platformName files', 0);
 
       await _downloadToFileWithResume(
-        url: url,
-        finalPath: tarGzPath,
-        expectedSha256: expectedSha256,
+        url: target.url,
+        finalPath: archivePath,
+        expectedSha256: target.sha256,
         onProgress: (p) =>
             onProgress?.call('Downloading $platformName files', p * 0.5),
         onStatus: onStatus,
@@ -827,25 +903,37 @@ class CloudService {
 
       onProgress?.call('Extracting $platformName files', 0.5);
 
-      // Extract the tar.gz file
-      final bytes = await io.File(tarGzPath).readAsBytes();
-      final gzipBytes = GZipDecoder().decodeBytes(bytes);
-      final archive = TarDecoder().decodeBytes(gzipBytes);
+      // Dropped before overwriting anything, so an extraction that fails or
+      // is cancelled halfway can never be mistaken for a complete install.
+      final marker = io.File(p.join(installRoot, clientMarkerFileName));
+      if (await marker.exists()) await marker.delete();
+
+      final bytes = await io.File(archivePath).readAsBytes();
+      final archive = target.assetName.endsWith('.zip')
+          ? ZipDecoder().decodeBytes(bytes)
+          : TarDecoder().decodeBytes(GZipDecoder().decodeBytes(bytes));
+
+      final wrapper = archiveWrapperPrefix(archive.map((f) => f.name));
 
       int filesProcessed = 0;
       final totalFiles = archive.length;
+      final extractedFiles = <String>[];
 
-      final baseFolderName = await _detectExistingBaseFolderNameForExtraction(gameDataPath);
+      final baseFolderName = await _detectExistingBaseFolderNameForExtraction(installRoot);
 
       for (final file in archive) {
         if (isCancelled != null && isCancelled()) {
           throw Exception('Extraction cancelled');
         }
 
-        final filename = file.name;
+        final filename = file.name.substring(wrapper.length);
+        if (filename.isEmpty) {
+          filesProcessed++;
+          continue;
+        }
 
         final targetPath = resolveExtractTargetPath(
-          gameDataPath: gameDataPath,
+          gameDataPath: installRoot,
           filename: filename,
           baseFolderName: baseFolderName,
         );
@@ -854,6 +942,7 @@ class CloudService {
           final outFile = io.File(targetPath);
           await outFile.create(recursive: true);
           await outFile.writeAsBytes(file.content as List<int>);
+          extractedFiles.add(p.relative(targetPath, from: installRoot));
 
           // Apply unix permissions from tar if available
           if (io.Platform.isLinux || io.Platform.isMacOS) {
@@ -883,6 +972,14 @@ class CloudService {
         }
       }
 
+      // Written last: its presence means every file above is in place.
+      await marker.writeAsString(jsonEncode({
+        'version': target.version,
+        'asset': target.assetName,
+        'sha256': target.sha256,
+        'files': extractedFiles,
+      }));
+
       onProgress?.call('$platformName files extracted', 1.0);
     } finally {
       // Clean up temp directory
@@ -892,6 +989,30 @@ class CloudService {
         }
       } catch (_) {}
     }
+  }
+
+  /// The single top-level folder every entry of an archive sits in, with its
+  /// trailing slash, or an empty string when there is none.
+  ///
+  /// The Windows client zips wrap their contents in a folder named after the
+  /// build (`JoF-master-windows-x86_64/GameData/...`), while the Linux and
+  /// macOS tarballs start directly at the install layout. A top-level folder
+  /// that is itself part of that layout is never stripped.
+  @visibleForTesting
+  static String archiveWrapperPrefix(Iterable<String> entryNames) {
+    String? top;
+    for (final name in entryNames) {
+      final slash = name.indexOf('/');
+      // A file at the archive root means there is no wrapper.
+      if (slash <= 0) return '';
+      final first = name.substring(0, slash);
+      if (top != null && top != first) return '';
+      top = first;
+    }
+    if (top == null) return '';
+    const layoutFolders = {'GameData', 'EternalJK', 'base', 'Base'};
+    if (layoutFolders.contains(top)) return '';
+    return '$top/';
   }
 
   Future<String> _detectExistingBaseFolderNameForExtraction(String gameDataPath) async {

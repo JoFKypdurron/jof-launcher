@@ -105,61 +105,67 @@ a Developer ID and notarizing would remove both of these annoyances.
 
 ## Game client (EternalJK) downloads
 
-On Linux and macOS the launcher installs the EternalJK client from **GitHub
+On every platform the launcher installs the EternalJK client from **GitHub
 releases** on [JediofFreedom/JoF_EJK](https://github.com/JediofFreedom/JoF_EJK),
-not from our own S3 bucket:
+not from our own S3 bucket or the jofhub `clientgroups` files:
 
 ```
 https://github.com/JediofFreedom/JoF_EJK/releases/download/<version>/JoF-<platform>-<arch>.tar.gz
+https://github.com/JediofFreedom/JoF_EJK/releases/download/<version>/JoF-windows-<arch>.zip
 ```
+
+On Windows the architecture comes from `PROCESSOR_ARCHITECTURE` (64-bit,
+including ARM64 under emulation, unless Windows itself is 32-bit).
 
 ### Choosing which version ships
 
-The version is **not** hardcoded in the launcher — it is read from the jofhub
-cloud manifest at runtime, so publishing a new client is a manifest edit rather
-than a launcher release.
+The version is **not** hardcoded in the launcher; GitHub decides at runtime,
+so publishing or rolling back a client is a GitHub release edit rather than a
+launcher release. The jofhub `clientgroups` are not consulted at all.
 
-`ClientReleaseService.parseVersion` looks through `data.clientgroups[].assets[]`
-for an asset whose name starts with `jofclient-`, and takes the first dotted
-version out of its `description`:
+The stable channel installs the release GitHub marks as **Latest**
+(`GET /repos/JediofFreedom/JoF_EJK/releases/latest`). To roll clients forward
+or back, publish a release or move the "Set as the latest release" flag to an
+older one. Prereleases and drafts are never picked for stable.
 
-```
-"description": "JoF EJK Client 1.6.1 (64 Bit)"   ->   1.6.1
-```
-
-To roll clients forward or back, change that description in the cloud file
-manager. Note this is a free-text field rather than a dedicated version column,
-so keep a version number in it. If it ever stops parsing, the launcher falls
-back to `ClientReleaseService.fallbackVersion` (currently `1.6.1`) rather than
-failing the sync — bump that constant when the pinned floor should move.
+If GitHub cannot be reached or rate-limits the launcher (60 requests/hour
+unauthenticated), whatever client is already installed is kept as is. Only an
+install with no client at all falls back to
+`ClientReleaseService.fallbackVersion` (currently `1.6.1`). Bump that constant
+when the floor for fresh installs should move.
 
 Downloads are verified against the sha256 published by the GitHub release API
 (`assets[].digest`) before extraction. If the API is unreachable or
 rate-limited (60 requests/hour unauthenticated), verification is skipped rather
 than blocking the download.
 
+### Skipping an unchanged client
+
+After extracting, the launcher writes `GameData/.jof-client.json` recording the
+release version, asset name, sha256 and the files it extracted. A sync
+downloads the client only when that marker no longer matches the release it
+would install: a new version, a different architecture or channel, a release
+re-uploaded under the same tag (different sha256), or an extracted file that
+has since gone missing. When the sha256 cannot be looked up, version and asset
+name decide. The tag lookup returns the digests too, and a resolved tag is
+reused for five minutes, so a sync costs one GitHub API request. A new client release is installed on the next sync even when no
+other asset changed.
+
 ### Release channels
 
 Settings → Platform has an "EternalJK client version" dropdown with three
-options: **Latest stable** (the default), **Beta**, and **Alpha**. It is only
-shown on Linux and macOS.
+options: **Latest stable** (the default), **Beta**, and **Alpha**.
 
-Stable keeps the behaviour above unchanged — the version comes from the
-manifest description. Alpha and beta instead call
+Stable uses the release marked Latest, as above. Alpha and beta instead call
 `GET /repos/JediofFreedom/JoF_EJK/releases` and pick the newest tag matching
 `X.Y.Z-alpha.N` / `X.Y.Z-beta.N` (`ClientReleaseService.selectLatestTag`),
 comparing the base version and build number numerically rather than trusting
-the API's ordering. Since the client tarball is re-downloaded and re-extracted
-on every sync, switching channels takes effect on the next sync with no extra
-cache-invalidation step.
+the API's ordering. Switching channels changes the release the install marker
+is compared against, so it takes effect on the next sync.
 
-A failed or rate-limited lookup on a non-stable channel degrades to the
-stable resolution (manifest, then `fallbackVersion`) rather than failing the
-sync, for the same reason sha256 verification degrades gracefully above.
-
-Windows is unaffected and still installs the client as individual files from
-the jofhub repository via `clientgroups`; the channel setting is not shown
-there.
+A failed or rate-limited lookup on any channel keeps the installed client
+rather than failing the sync or swapping an alpha or beta build for stable,
+for the same reason sha256 verification degrades gracefully above.
 
 ## Cloud backup
 

@@ -138,7 +138,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('client_channel'), 'beta');
     },
-    skip: !Platform.isLinux && !Platform.isMacOS,
+    skip: !Platform.isLinux && !Platform.isMacOS && !Platform.isWindows,
   );
 
   testWidgets('clearing download path TextField removes it from settings', (WidgetTester tester) async {
