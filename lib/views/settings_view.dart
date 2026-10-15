@@ -4,6 +4,7 @@ import 'dart:io' as io;
 import '../controllers/settings_view_controller.dart';
 import '../models/client_channel.dart';
 import '../models/platform_arch.dart';
+import '../models/repository_source.dart';
 import '../services/backup_service.dart';
 import 'backup_restore_view.dart';
 
@@ -16,6 +17,9 @@ class SettingsView extends StatefulWidget {
 
   @visibleForTesting
   static const Key clientChannelDropdownKey = Key('client_channel_dropdown');
+
+  @visibleForTesting
+  static const Key repositorySourceDropdownKey = Key('repository_source_dropdown');
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -252,6 +256,47 @@ class _SettingsViewState extends State<SettingsView> {
                   ),
                 ],
               ),
+              const SizedBox(height: 24),
+              const Text(
+                'Downloads',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<RepositorySource>(
+                key: SettingsView.repositorySourceDropdownKey,
+                initialValue: _controller.repositorySource,
+                decoration: const InputDecoration(
+                  labelText: 'Download source',
+                  helperText: 'Where game assets are downloaded from. '
+                      'Auto uses the JoF Cloud mirror and falls back to jofhub.eu.',
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: RepositorySource.auto,
+                    child: Text('Auto (JoF Cloud, fall back to jofhub.eu)'),
+                  ),
+                  DropdownMenuItem(
+                    value: RepositorySource.mirror,
+                    child: Text('JoF Cloud mirror only'),
+                  ),
+                  DropdownMenuItem(
+                    value: RepositorySource.origin,
+                    child: Text('jofhub.eu only'),
+                  ),
+                ],
+                onChanged: (value) async {
+                  if (value == null) return;
+                  await _controller.setRepositorySource(value);
+                },
+              ),
+              if (_controller.logFilePath != null) ...[
+                const SizedBox(height: 12),
+                const Text('Log file (for support):', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                SelectableText(
+                  _controller.logFilePath!,
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                ),
+              ],
               const SizedBox(height: 24),
               const Text(
                 'Automation',

@@ -9,8 +9,10 @@ import '../models/asset.dart';
 import '../models/asset_group.dart';
 import '../models/client_channel.dart';
 import '../models/platform_arch.dart';
+import '../models/repository_source.dart';
 import 'client_release_service.dart';
 import 'connectivity_service.dart';
+import 'log_service.dart';
 import 'settings_service.dart';
 import 'system_arch_service.dart';
 import 'package:path/path.dart' as p;
@@ -111,8 +113,6 @@ class CloudData {
 }
 
 class CloudService {
-  static const String _apiUrl = 'https://api.jofhub.eu/cloud/filemanager/getclouddata';
-
   static const Set<String> _linuxStaticManagedRelativePaths = {
     'eternaljk.x86_64',
     'rd-eternaljk_x86_64.so',
@@ -133,16 +133,43 @@ class CloudService {
 
   final SystemArchService _systemArch;
 
+  /// Delay before retry [attempt] of a download. Test seam.
+  final Duration Function(int attempt) _retryBackoff;
+
+  /// The endpoint that answered the most recent manifest fetch.
+  RepositoryEndpoint? _manifestEndpoint;
+
+  /// Set when the mirror has proven unreliable this session: `auto` fetched
+  /// the manifest from the origin because the mirror failed, or a file had to
+  /// leave the mirror over a network error. Files are still tried on the
+  /// mirror, but abandoned quickly. Cleared by the next manifest fetch.
+  bool _mirrorDegraded = false;
+
+  /// Files in a row that left the mirror over network errors. At
+  /// [_mirrorBreakerThreshold] the mirror is skipped for files until the next
+  /// manifest fetch, so a black-holed mirror does not cost a timeout per file.
+  int _mirrorNetworkFailureStreak = 0;
+
   CloudService({
     ConnectivityService? connectivity,
     http.Client Function()? httpClientFactory,
     ClientReleaseService? clientRelease,
     SystemArchService? systemArchService,
+    Duration Function(int attempt)? retryBackoff,
   })  : _connectivity = connectivity ?? ConnectivityService(),
         _httpClientFactory = httpClientFactory,
         _clientRelease = clientRelease ??
             ClientReleaseService(httpClientFactory: httpClientFactory),
-        _systemArch = systemArchService ?? SystemArchService();
+        _systemArch = systemArchService ?? SystemArchService(),
+        _retryBackoff = retryBackoff ?? _defaultRetryBackoff;
+
+  /// Exponential backoff, 2s..30s.
+  static Duration _defaultRetryBackoff(int attempt) =>
+      Duration(seconds: (1 << attempt.clamp(1, 5)).clamp(2, 30));
+
+  /// The endpoint that answered the most recent manifest fetch, or null before
+  /// the first successful one.
+  RepositoryEndpoint? get manifestEndpoint => _manifestEndpoint;
 
   /// Timeout for establishing a connection / receiving response headers.
   static const Duration _connectTimeout = Duration(seconds: 30);
@@ -159,6 +186,19 @@ class CloudService {
   /// Minimum interval between progress callbacks. Each callback rebuilds UI
   /// state, so firing it per network chunk (thousands per file) is wasteful.
   static const Duration _progressInterval = Duration(milliseconds: 100);
+
+  /// Manifest timeout for a source that has a fallback behind it. Short, so a
+  /// down mirror does not hold up the launcher.
+  static const Duration _fallbackManifestTimeout = Duration(seconds: 10);
+
+  /// Network failures (while online) a healthy mirror gets per file before
+  /// the file falls back to the origin.
+  static const int _mirrorMaxNetworkFailures = 3;
+
+  /// Connect timeout for a degraded mirror, which gets a single attempt.
+  static const Duration _degradedMirrorConnectTimeout = Duration(seconds: 5);
+
+  static const int _mirrorBreakerThreshold = 3;
 
   /// Creates an HTTP client with proper certificate handling for Windows
   http.Client _createHttpClient() {
@@ -243,84 +283,159 @@ class CloudService {
     return digest.toString();
   }
 
+  /// Fetches and parses the cloud manifest from the configured
+  /// [RepositorySource]. Under `auto` the mirror is tried first with a short
+  /// timeout, and any failure (network, non-2xx, invalid JSON, status not OK)
+  /// falls back to the origin.
   Future<CloudData> fetchCloudData() async {
+    final source = await _repositorySource();
+    final endpoints = source.endpoints;
+    Object? lastError;
+    StackTrace? lastStack;
+
+    for (var i = 0; i < endpoints.length; i++) {
+      final endpoint = endpoints[i];
+      final fallback = i + 1 < endpoints.length ? endpoints[i + 1] : null;
+      try {
+        final body = await _fetchManifestBody(
+          endpoint,
+          timeout: fallback != null ? _fallbackManifestTimeout : null,
+        );
+        final cloudData = _parseCloudData(body);
+
+        _manifestEndpoint = endpoint;
+        _mirrorDegraded = endpoint != RepositoryEndpoint.mirror &&
+            endpoints.contains(RepositoryEndpoint.mirror);
+        _mirrorNetworkFailureStreak = 0;
+        _log('manifest from ${endpoint.name} (source: ${source.persistedValue})');
+        return cloudData;
+      } catch (e, st) {
+        lastError = e;
+        lastStack = st;
+        _log(fallback != null
+            ? 'manifest: ${endpoint.name} failed (${_describeError(e)}), trying ${fallback.name}'
+            : 'manifest: ${endpoint.name} failed (${_describeError(e)})');
+      }
+    }
+
+    if (kIsWeb && lastError.toString().contains('XMLHttpRequest error')) {
+      throw Exception('Fetching cloud data failed. This is likely due to a CORS issue on the server. '
+          'The server at ${endpoints.last.manifestUri.host} must be configured to allow requests from this origin.');
+    }
+    Error.throwWithStackTrace(lastError!, lastStack!);
+  }
+
+  /// Downloads one manifest and checks it is a well-formed, `OK` response.
+  Future<Map<String, dynamic>> _fetchManifestBody(
+    RepositoryEndpoint endpoint, {
+    Duration? timeout,
+  }) async {
     final client = _createHttpClient();
     try {
-      final response = await client.get(Uri.parse(_apiUrl));
+      var request = client.get(endpoint.manifestUri);
+      if (timeout != null) request = request.timeout(timeout);
+      final response = await request;
 
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> body = jsonDecode(response.body);
-        if (body['status'] == 'OK') {
-          final data = body['data'] as Map<String, dynamic>?;
-          if (data == null) {
-            return CloudData(clientGroups: [], modGroups: [], assetGroups: [], otherGroups: []);
-          }
-          
-          List<AssetGroup> clientGroups = [];
-          List<AssetGroup> modGroups = [];
-          List<AssetGroup> assetGroups = [];
-          List<AssetGroup> otherGroups = [];
-
-          // Read before the Linux/macOS override below replaces clientgroups
-          // with a placeholder, which would discard the descriptions the
-          // version lives in.
-          final clientVersion =
-              ClientReleaseService.parseVersion(data['clientgroups'] as List?);
-
-          if (data['clientgroups'] != null) {
-            clientGroups = (data['clientgroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
-          }
-
-          if (!kIsWeb && (io.Platform.isLinux || io.Platform.isMacOS)) {
-            clientGroups = [
-              AssetGroup(
-                id: -1,
-                name: 'JoF EternalJK',
-                description: 'Required game client for Linux/macOS',
-                category: 'CLIENT',
-                targetFolder: '',
-                assets: [],
-                isRequired: true,
-              )
-            ];
-          }
-          if (data['modgroups'] != null) {
-            modGroups = (data['modgroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
-          }
-          if (data['assetgroups'] != null) {
-            assetGroups = (data['assetgroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
-          }
-          if (data['othergroups'] != null) {
-            otherGroups = (data['othergroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
-          }
-
-          final cloudData = CloudData(
-            clientGroups: clientGroups,
-            modGroups: modGroups,
-            assetGroups: assetGroups,
-            otherGroups: otherGroups,
-            clientVersion: clientVersion,
-          );
-
-          _cachedCloudData = cloudData;
-          return cloudData;
-        } else {
-          throw Exception('API returned status ${body['status']}');
-        }
-      } else {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('Failed to load cloud data: ${response.statusCode}');
       }
-    } catch (e) {
-      if (kIsWeb && e.toString().contains('XMLHttpRequest error')) {
-        throw Exception('Fetching cloud data failed. This is likely due to a CORS issue on the server. '
-            'The server at api.jofhub.eu must be configured to allow requests from this origin.');
+      final body = jsonDecode(response.body);
+      if (body is! Map<String, dynamic>) {
+        throw const FormatException('Cloud data is not a JSON object');
       }
-      rethrow;
+      if (body['status'] != 'OK') {
+        throw Exception('API returned status ${body['status']}');
+      }
+      return body;
     } finally {
       client.close();
     }
   }
 
+  CloudData _parseCloudData(Map<String, dynamic> body) {
+    final data = body['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      return CloudData(clientGroups: [], modGroups: [], assetGroups: [], otherGroups: []);
+    }
+
+    List<AssetGroup> clientGroups = [];
+    List<AssetGroup> modGroups = [];
+    List<AssetGroup> assetGroups = [];
+    List<AssetGroup> otherGroups = [];
+
+    // Read before the Linux/macOS override below replaces clientgroups
+    // with a placeholder, which would discard the descriptions the
+    // version lives in.
+    final clientVersion =
+        ClientReleaseService.parseVersion(data['clientgroups'] as List?);
+
+    if (data['clientgroups'] != null) {
+      clientGroups = (data['clientgroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
+    }
+
+    if (!kIsWeb && (io.Platform.isLinux || io.Platform.isMacOS)) {
+      clientGroups = [
+        AssetGroup(
+          id: -1,
+          name: 'JoF EternalJK',
+          description: 'Required game client for Linux/macOS',
+          category: 'CLIENT',
+          targetFolder: '',
+          assets: [],
+          isRequired: true,
+        )
+      ];
+    }
+    if (data['modgroups'] != null) {
+      modGroups = (data['modgroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
+    }
+    if (data['assetgroups'] != null) {
+      assetGroups = (data['assetgroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
+    }
+    if (data['othergroups'] != null) {
+      otherGroups = (data['othergroups'] as List).map((g) => AssetGroup.fromJson(g)).toList();
+    }
+
+    final cloudData = CloudData(
+      clientGroups: clientGroups,
+      modGroups: modGroups,
+      assetGroups: assetGroups,
+      otherGroups: otherGroups,
+      clientVersion: clientVersion,
+    );
+
+    _cachedCloudData = cloudData;
+    return cloudData;
+  }
+
+  Future<RepositorySource> _repositorySource() async {
+    try {
+      return RepositorySourceCodec.tryParse(
+              await SettingsService().getRepositorySource()) ??
+          RepositorySource.auto;
+    } catch (_) {
+      // Preferences unavailable: use the default rather than fail the sync.
+      return RepositorySource.auto;
+    }
+  }
+
+  void _log(String message) => LogService.instance.log('repo', message);
+
+  static String _describeError(Object e) {
+    final text = e.toString().replaceAll(RegExp(r'\s+'), ' ');
+    return text.length > 200 ? '${text.substring(0, 200)}…' : text;
+  }
+
+  /// Downloads [asset] into [downloadDir] from the configured
+  /// [RepositorySource].
+  ///
+  /// Under `auto` the file comes from the mirror and falls back to the origin
+  /// for this file when the mirror does not have it (403/404/5xx), serves the
+  /// wrong content (HTML, or a size or MD5 that does not match the manifest,
+  /// typically a file the hourly sync has not copied yet), or stays
+  /// unreachable. Both sources share one integrity-failure budget, so a
+  /// fallback never raises the number of full downloads above
+  /// [_maxIntegrityFailures].
   Future<void> downloadAsset(
     Asset asset,
     String downloadDir, {
@@ -332,7 +447,6 @@ class CloudService {
       throw Exception('Asset downloading is not supported on the web version.');
     }
 
-    final url = asset.downloadUrl;
     final finalDownloadDir = await _getActualTargetDir(downloadDir, asset.targetFolder);
     final savePath = p.join(finalDownloadDir, asset.name);
 
@@ -345,15 +459,67 @@ class CloudService {
       await dir.create(recursive: true);
     }
 
-    await _downloadToFileWithResume(
-      url: url,
-      finalPath: savePath,
-      expectedSize: asset.size > 0 ? asset.size : null,
-      expectedHash: asset.hash.isNotEmpty ? asset.hash : null,
-      onProgress: onProgress,
-      onStatus: onStatus,
-      isCancelled: isCancelled,
-    );
+    final source = await _repositorySource();
+    final endpoints = source.endpoints;
+    final integrity = _IntegrityBudget();
+
+    for (var i = 0; i < endpoints.length; i++) {
+      final endpoint = endpoints[i];
+      final fallback = i + 1 < endpoints.length ? endpoints[i + 1] : null;
+      final isMirror = endpoint == RepositoryEndpoint.mirror;
+
+      if (fallback != null &&
+          isMirror &&
+          _mirrorNetworkFailureStreak >= _mirrorBreakerThreshold) {
+        _log('${asset.name}: skipping mirror (unreachable for '
+            '$_mirrorNetworkFailureStreak files in a row), using ${fallback.name}');
+        continue;
+      }
+
+      final url = endpoint.fileUri(asset.repositoryPath).toString();
+      final quickMirror = fallback != null && isMirror && _mirrorDegraded;
+      try {
+        await _downloadToFileWithResume(
+          url: url,
+          finalPath: savePath,
+          expectedSize: asset.size > 0 ? asset.size : null,
+          expectedHash: asset.hash.isNotEmpty ? asset.hash : null,
+          onProgress: onProgress,
+          onStatus: onStatus,
+          isCancelled: isCancelled,
+          source: _SourceAttempt(
+            integrity: integrity,
+            canFallBack: fallback != null,
+            maxNetworkFailures: fallback == null
+                ? null
+                : quickMirror
+                    ? 1
+                    : _mirrorMaxNetworkFailures,
+            connectTimeout:
+                quickMirror ? _degradedMirrorConnectTimeout : _connectTimeout,
+          ),
+        );
+      } on _SourceUnusableException catch (e) {
+        if (isMirror && e.sourceDown) {
+          _mirrorDegraded = true;
+          _mirrorNetworkFailureStreak++;
+        }
+        _log('${asset.name}: ${endpoint.name} failed (${e.reason}), '
+            'trying ${fallback!.name} [$url]');
+        onStatus?.call('Downloading ${asset.name} from ${fallback.fileHost}…');
+        continue;
+      } catch (e) {
+        if (!_isCancellation(e)) {
+          _log('${asset.name}: ${endpoint.name} failed (${_describeError(e)}) [$url]');
+        }
+        rethrow;
+      }
+
+      if (isMirror) _mirrorNetworkFailureStreak = 0;
+      _log('${asset.name}: downloaded from ${endpoint.name}'
+          '${i > 0 ? ' after fallback' : ''} (source: ${source.persistedValue})');
+      return;
+    }
   }
 
   /// Downloads a single verified file, for callers outside asset syncing.
@@ -398,6 +564,7 @@ class CloudService {
     Function(double progress)? onProgress,
     void Function(String status)? onStatus,
     bool Function()? isCancelled,
+    _SourceAttempt? source,
   }) async {
     bool cancelled() => isCancelled?.call() ?? false;
 
@@ -413,7 +580,11 @@ class CloudService {
     // A checksum mismatch is retried (it is usually a corrupted transfer), but
     // the retry loop below is otherwise unbounded. Without a ceiling, a file
     // whose published checksum simply never matches would re-download forever.
-    var integrityFailures = 0;
+    // An asset download shares this budget across its sources.
+    final integrity = source?.integrity ?? _IntegrityBudget();
+    // Retryable failures while online. Only bounded for a source with a
+    // fallback; otherwise the loop keeps retrying as before.
+    var networkFailures = 0;
 
     while (true) {
       if (cancelled()) {
@@ -432,7 +603,9 @@ class CloudService {
           request.headers['Range'] = 'bytes=$offset-';
         }
 
-        final response = await client.send(request).timeout(_connectTimeout);
+        final response = await client
+            .send(request)
+            .timeout(source?.connectTimeout ?? _connectTimeout);
 
         int total;
         bool append;
@@ -455,7 +628,24 @@ class CloudService {
         } else {
           // A real HTTP error (404/5xx/...) is not a connectivity problem;
           // fail fast rather than retrying forever.
+          if (source != null && source.canFallBack) {
+            throw _SourceUnusableException('HTTP ${response.statusCode}',
+                sourceDown: response.statusCode >= 500);
+          }
           throw Exception('Failed to download asset: ${response.statusCode}');
+        }
+
+        // The size of the whole file as the server declares it.
+        final declaredTotal = response.statusCode == 206
+            ? _totalFromContentRange(response)
+            : response.contentLength;
+        if (source != null) {
+          final mismatch = _contentMismatch(
+              response, declaredTotal, expectedSize, finalPath);
+          if (mismatch != null) {
+            if (await partFile.exists()) await partFile.delete();
+            _rejectContent(source, mismatch, url, bodyDownloaded: false);
+          }
         }
 
         sink = await partFile.open(
@@ -494,6 +684,14 @@ class CloudService {
         final checkSize = expectedSize ?? (total > 0 ? total : null);
         final finalLength = await partFile.length();
         if (checkSize != null && finalLength != checkSize) {
+          if (source != null && declaredTotal == null && expectedSize != null) {
+            // The body ended cleanly without a declared size, so this is the
+            // whole of a wrong file rather than a truncated transfer.
+            await partFile.delete();
+            _rejectContent(
+                source, 'size $finalLength, manifest says $expectedSize', url,
+                bodyDownloaded: true);
+          }
           if (finalLength > checkSize) {
             // Overran the expected size (corrupt) — restart from scratch.
             await partFile.delete();
@@ -504,8 +702,11 @@ class CloudService {
           final actualHash = await _calculateFileHash(partFile);
           if (actualHash != expectedHash) {
             await partFile.delete();
-            integrityFailures++;
-            _failFastOnRepeatedCorruption(integrityFailures, 'MD5', url);
+            integrity.failures++;
+            _failFastOnRepeatedCorruption(integrity.failures, 'MD5', url);
+            if (source != null && source.canFallBack) {
+              throw const _SourceUnusableException('MD5 mismatch');
+            }
             throw const _RetryableDownloadException('hash mismatch');
           }
         }
@@ -513,8 +714,8 @@ class CloudService {
           final actualSha256 = await _calculateFileSha256(partFile);
           if (actualSha256.toLowerCase() != expectedSha256.toLowerCase()) {
             await partFile.delete();
-            integrityFailures++;
-            _failFastOnRepeatedCorruption(integrityFailures, 'SHA-256', url);
+            integrity.failures++;
+            _failFastOnRepeatedCorruption(integrity.failures, 'SHA-256', url);
             throw const _RetryableDownloadException('sha256 mismatch');
           }
         }
@@ -552,6 +753,21 @@ class CloudService {
           onStatus?.call('Network lost — waiting to resume…');
           await _connectivity.waitForConnection(isCancelled: cancelled);
         } else {
+          networkFailures++;
+          final limit = source?.maxNetworkFailures;
+          if (source != null &&
+              source.canFallBack &&
+              limit != null &&
+              networkFailures >= limit) {
+            // Never resume these bytes from another source: the copies
+            // can differ while the mirror is catching up.
+            try {
+              if (await partFile.exists()) await partFile.delete();
+            } catch (_) {}
+            throw _SourceUnusableException(
+                'network error after $networkFailures attempt(s): ${_describeError(e)}',
+                sourceDown: true);
+          }
           onStatus?.call('Connection interrupted — retrying…');
           await _cancellableBackoff(attempt, cancelled);
         }
@@ -567,6 +783,50 @@ class CloudService {
     final slash = header.lastIndexOf('/');
     if (slash < 0) return null;
     return int.tryParse(header.substring(slash + 1).trim());
+  }
+
+  /// Why a response cannot be the expected file, judged from its headers
+  /// alone, or null if it may be. Catches the HTML error page CloudFront
+  /// serves for a missing file, and a stale copy of a file the manifest has
+  /// since updated.
+  static String? _contentMismatch(
+    http.StreamedResponse response,
+    int? declaredTotal,
+    int? expectedSize,
+    String finalPath,
+  ) {
+    final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+    final extension = p.extension(finalPath).toLowerCase();
+    if (contentType.startsWith('text/html') &&
+        extension != '.html' &&
+        extension != '.htm') {
+      return 'served $contentType';
+    }
+    if (expectedSize != null &&
+        declaredTotal != null &&
+        declaredTotal != expectedSize) {
+      return 'size $declaredTotal, manifest says $expectedSize';
+    }
+    return null;
+  }
+
+  /// Rejects content that is not the expected file. With a fallback the file
+  /// moves on to the next source, and only a mismatch that cost a full
+  /// download uses the integrity budget. Without one every mismatch counts,
+  /// so a source that keeps serving the wrong file fails after
+  /// [_maxIntegrityFailures] instead of retrying forever.
+  Never _rejectContent(
+    _SourceAttempt source,
+    String reason,
+    String url, {
+    required bool bodyDownloaded,
+  }) {
+    if (bodyDownloaded || !source.canFallBack) {
+      source.integrity.failures++;
+      _failFastOnRepeatedCorruption(source.integrity.failures, 'size/type', url);
+    }
+    if (source.canFallBack) throw _SourceUnusableException(reason);
+    throw _RetryableDownloadException(reason);
   }
 
   /// Atomically moves the completed `.part` file onto [finalPath].
@@ -598,7 +858,7 @@ class CloudService {
     if (failures < _maxIntegrityFailures) return;
     throw Exception(
         'Download failed $algorithm verification $failures times: $url. '
-        'The published checksum does not match the file being served.');
+        'The file being served does not match the published manifest.');
   }
 
   bool _isRetryable(Object e) {
@@ -611,8 +871,7 @@ class CloudService {
 
   /// Sleeps with exponential backoff (2s..30s), returning early if cancelled.
   Future<void> _cancellableBackoff(int attempt, bool Function() cancelled) async {
-    final seconds = (1 << attempt.clamp(1, 5)).clamp(2, 30);
-    var remaining = Duration(seconds: seconds);
+    var remaining = _retryBackoff(attempt);
     const step = Duration(milliseconds: 250);
     while (remaining > Duration.zero) {
       if (cancelled()) return;
@@ -958,4 +1217,46 @@ class _RetryableDownloadException implements Exception {
 
   @override
   String toString() => 'RetryableDownloadException: $message';
+}
+
+/// A source served something other than the expected file, or could not be
+/// reached, and the download should move on to the next source.
+class _SourceUnusableException implements Exception {
+  final String reason;
+
+  /// The source itself looks down (network error or 5xx), as opposed to
+  /// missing or lagging on this one file.
+  final bool sourceDown;
+
+  const _SourceUnusableException(this.reason, {this.sourceDown = false});
+
+  @override
+  String toString() => 'SourceUnusableException: $reason';
+}
+
+/// Integrity failures for one file, shared across the sources it is tried on.
+class _IntegrityBudget {
+  int failures = 0;
+}
+
+/// How an asset download treats the source it is currently using.
+class _SourceAttempt {
+  final _IntegrityBudget integrity;
+
+  /// Another source follows. When true, source problems throw
+  /// [_SourceUnusableException] instead of failing or retrying here.
+  final bool canFallBack;
+
+  /// Retryable failures while online before giving up on this source. Null
+  /// keeps retrying.
+  final int? maxNetworkFailures;
+
+  final Duration connectTimeout;
+
+  const _SourceAttempt({
+    required this.integrity,
+    required this.canFallBack,
+    required this.maxNetworkFailures,
+    required this.connectTimeout,
+  });
 }
