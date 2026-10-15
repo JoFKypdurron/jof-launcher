@@ -9,18 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class QueueTestCloudService extends CloudService {
   @override
-  Future<void> downloadAndExtractLinuxFiles(
-    String gameDataPath, {
-    Function(String name, double progress)? onProgress,
-    void Function(String status)? onStatus,
-    bool Function()? isCancelled,
-  }) async {
-    // No-op for tests: real implementation downloads an archive over HTTP.
-  }
-
-  @override
-  Future<void> downloadAndExtractMacosFiles(
-    String gameDataPath, {
+  Future<void> syncClientFiles(
+    String installRoot, {
+    String? currentInstallPath,
     Function(String name, double progress)? onProgress,
     void Function(String status)? onStatus,
     bool Function()? isCancelled,
@@ -63,8 +54,9 @@ Asset _asset(int id, String name) => Asset(
       lastUpdate: DateTime.now(),
     );
 
-/// The platform client files are one extra queued step on Linux and macOS.
-final int _platformStep = (Platform.isLinux || Platform.isMacOS) ? 1 : 0;
+/// The client files are one extra queued step on every desktop platform.
+final int _platformStep =
+    (Platform.isLinux || Platform.isMacOS || Platform.isWindows) ? 1 : 0;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import '../models/update_manifest.dart';
+import 'secure_http_client.dart';
 
 /// Discovers the latest published launcher release.
 ///
@@ -28,7 +29,7 @@ class UpdateFeedService {
   UpdateFeedService({http.Client Function()? httpClientFactory})
       : _httpClientFactory = httpClientFactory;
 
-  http.Client _createHttpClient() => _httpClientFactory?.call() ?? http.Client();
+  http.Client _createHttpClient() => _httpClientFactory?.call() ?? createSecureHttpClient();
 
   /// The latest release, or null if it cannot be determined.
   Future<UpdateManifest?> fetchLatest() async {
@@ -136,6 +137,9 @@ class UpdateFeedService {
     if (name.endsWith('.deb')) return UpdateArtifactKind.linuxDeb;
     if (name.startsWith('jof-launcher-linux') && name.endsWith('.tar.gz')) {
       return UpdateArtifactKind.linuxTar;
+    }
+    if (name == 'jof-launcher-windows-setup.exe') {
+      return UpdateArtifactKind.windows;
     }
     return null;
   }

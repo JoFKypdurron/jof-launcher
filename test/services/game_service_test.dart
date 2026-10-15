@@ -4,6 +4,7 @@ import 'package:joflauncher/services/client_release_service.dart';
 import 'package:joflauncher/services/game_service.dart';
 import 'package:joflauncher/services/system_arch_service.dart';
 import 'package:joflauncher/models/asset_group.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -31,6 +32,23 @@ void main() {
           'eternaljk.x86_64');
     });
 
+    // Verified against the published zips: `JoF-windows-x86.zip` unpacks
+    // `GameData/eternaljk.x86.exe`, `JoF-windows-x86_64.zip`
+    // `GameData/eternaljk.x86_64.exe`.
+    test('Windows executable names match the published zip contents', () {
+      expect(GameService.windowsExecutableName(WindowsSystemArch.bit32),
+          'eternaljk.x86.exe');
+      expect(GameService.windowsExecutableName(WindowsSystemArch.bit64),
+          'eternaljk.x86_64.exe');
+    });
+
+    test('Windows launches the 64-bit client by default', () async {
+      final info = await GameService(platformOverride: 'windows')
+          .getExecutableInfo(p.join('games', 'GameData'));
+      expect(info?.executablePath,
+          p.join('games', 'GameData', 'eternaljk.x86_64.exe'));
+    });
+
     // The bug this guards against: downloading `JoF-macos-arm64.tar.gz` and
     // then launching `eternaljk.x86_64.app`, which the archive never wrote.
     test('the downloaded macOS asset and the launched bundle agree on arch',
@@ -56,7 +74,7 @@ void main() {
       );
 
       final info = await service.getExecutableInfo('/GameData');
-      expect(info!.executablePath, '/GameData/eternaljk.arm64.app');
+      expect(info!.executablePath, p.join('/GameData', 'eternaljk.arm64.app'));
       expect(info.workingDirectory, '/GameData');
     });
 
@@ -73,7 +91,7 @@ void main() {
       );
 
       expect((await service.getExecutableInfo('/GameData'))!.executablePath,
-          '/GameData/eternaljk.arm64.app');
+          p.join('/GameData', 'eternaljk.arm64.app'));
     });
 
     test('falls back to the stored architecture when detection fails',
@@ -86,7 +104,7 @@ void main() {
       );
 
       expect((await service.getExecutableInfo('/GameData'))!.executablePath,
-          '/GameData/eternaljk.arm64.app');
+          p.join('/GameData', 'eternaljk.arm64.app'));
     });
   });
 

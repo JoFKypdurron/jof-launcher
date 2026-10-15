@@ -86,9 +86,9 @@ class SyncManager {
   }
 
   /// Number of items a sync will work through: every asset it downloads or
-  /// removes, plus the single platform client-files step on Linux/macOS.
+  /// removes, plus the single client-files step.
   int _queueTotal(List<Asset> toDownload, List<Asset> toDelete) {
-    final platformStep = (Platform.isLinux || Platform.isMacOS) ? 1 : 0;
+    final platformStep = cloudService.supportsClientFiles ? 1 : 0;
     return toDownload.length + toDelete.length + platformStep;
   }
 
@@ -156,25 +156,16 @@ class SyncManager {
       onQueueProgress?.call(++completed, total);
     }
 
-    // Stage platform-specific files too.
-    if (!_isCancelled) {
-      if (Platform.isLinux) {
-        await cloudService.downloadAndExtractLinuxFiles(
-          stagingContentRoot,
-          onProgress: onProgress,
-          onStatus: onStatus,
-          isCancelled: () => _isCancelled,
-        );
-        onQueueProgress?.call(++completed, total);
-      } else if (Platform.isMacOS) {
-        await cloudService.downloadAndExtractMacosFiles(
-          stagingContentRoot,
-          onProgress: onProgress,
-          onStatus: onStatus,
-          isCancelled: () => _isCancelled,
-        );
-        onQueueProgress?.call(++completed, total);
-      }
+    // Stage the client too, unless the live install already has it.
+    if (!_isCancelled && cloudService.supportsClientFiles) {
+      await cloudService.syncClientFiles(
+        stagingContentRoot,
+        currentInstallPath: gameDataPath,
+        onProgress: onProgress,
+        onStatus: onStatus,
+        isCancelled: () => _isCancelled,
+      );
+      onQueueProgress?.call(++completed, total);
     }
 
     manifest['version'] = 1;
@@ -205,7 +196,15 @@ class SyncManager {
     final all = await entities.toList();
     // Skip leftover `.part` files from a download that was interrupted mid-sync
     // (e.g. an app crash) — they are incomplete and must not be moved into place.
-    final files = all.whereType<File>().where((f) => !f.path.endsWith('.part')).toList();
+    final files = all.whereType<File>().where((f) => !f.path.endsWith('.part')).toList()
+      // The client marker vouches for the files beside it, so it moves last:
+      // an apply interrupted halfway must not leave it claiming a complete
+      // client.
+      ..sort((a, b) {
+        final aMarker = p.basename(a.path) == CloudService.clientMarkerFileName;
+        final bMarker = p.basename(b.path) == CloudService.clientMarkerFileName;
+        return aMarker == bMarker ? 0 : (aMarker ? 1 : -1);
+      });
 
     for (final sourceFile in files) {
       if (_isCancelled) break;
@@ -369,25 +368,15 @@ class SyncManager {
       onQueueProgress?.call(++completed, total);
     }
 
-    // 3. Download and extract Linux or MacOS-specific files
-    if (!_isCancelled) {
-      if (Platform.isLinux) {
-        await cloudService.downloadAndExtractLinuxFiles(
-          gameDataPath,
-          onProgress: onProgress,
-          onStatus: onStatus,
-          isCancelled: () => _isCancelled,
-        );
-        onQueueProgress?.call(++completed, total);
-      } else if (Platform.isMacOS) {
-        await cloudService.downloadAndExtractMacosFiles(
-          gameDataPath,
-          onProgress: onProgress,
-          onStatus: onStatus,
-          isCancelled: () => _isCancelled,
-        );
-        onQueueProgress?.call(++completed, total);
-      }
+    // 3. Install the game client, skipped when already current
+    if (!_isCancelled && cloudService.supportsClientFiles) {
+      await cloudService.syncClientFiles(
+        gameDataPath,
+        onProgress: onProgress,
+        onStatus: onStatus,
+        isCancelled: () => _isCancelled,
+      );
+      onQueueProgress?.call(++completed, total);
     }
 
     if (_isCancelled) {

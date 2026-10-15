@@ -146,7 +146,7 @@ class _SettingsViewState extends State<SettingsView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (!kIsWeb && (io.Platform.isLinux || io.Platform.isMacOS)) ...[
+              if (!kIsWeb && (io.Platform.isLinux || io.Platform.isMacOS || io.Platform.isWindows)) ...[
                 const Text(
                   'Platform',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),

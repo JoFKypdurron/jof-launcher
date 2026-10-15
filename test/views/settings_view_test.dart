@@ -138,7 +138,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('client_channel'), 'beta');
     },
-    skip: !Platform.isLinux && !Platform.isMacOS,
+    skip: !Platform.isLinux && !Platform.isMacOS && !Platform.isWindows,
   );
 
   testWidgets('SettingsView persists the download source pick', (WidgetTester tester) async {

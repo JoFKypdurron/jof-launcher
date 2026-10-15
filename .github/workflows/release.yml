@@ -116,45 +116,49 @@ jobs:
           path: jof-launcher-macos.dmg
           retention-days: 5
 
-#  build-windows:
-#    runs-on: windows-latest
-#
-#    steps:
-#      - name: Checkout code
-#        uses: actions/checkout@v7
-#
-#      - name: Setup Flutter
-#        uses: subosito/flutter-action@v2
-#        with:
-#          channel: 'stable'
-#
-#      - name: Get Flutter dependencies
-#        run: flutter pub get
-#
-#      - name: Run tests
-#        run: flutter test
-#
-#      - name: Build Windows release
-#        run: flutter build windows --release
-#
-#      - name: Package Windows release
-#        run: powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1
-#
-#      - name: Extract Windows package for artifact
-#        run: |
-#          mkdir artifact-staging
-#          Expand-Archive -Path jof-launcher-windows.zip -DestinationPath artifact-staging
-#        shell: pwsh
-#
-#      - name: Upload Windows artifact
-#        uses: actions/upload-artifact@v7
-#        with:
-#          name: jof-launcher-windows
-#          path: artifact-staging
-#          retention-days: 5
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      # Inno Setup ships on some runner images but not all.
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+
+      - name: Package Windows release
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -RequireInstaller
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jof-launcher-windows
+          path: |
+            jof-launcher-windows-setup.exe
+            jof-launcher-windows.zip
+          retention-days: 5
 
   release:
-    needs: [build-linux, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -174,11 +178,11 @@ jobs:
           name: jof-launcher-macos
           path: dist
 
-#      - name: Download Windows artifact
-#        uses: actions/download-artifact@v8
-#        with:
-#          name: jof-launcher-windows
-#          path: windows-artifact
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: jof-launcher-windows
+          path: dist
 
       - name: Download .deb artifact
         uses: actions/download-artifact@v8
@@ -186,15 +190,14 @@ jobs:
           name: jof-launcher-deb
           path: dist/deb
 
-#      - name: Recreate Windows zip for release
-#        run: cd windows-artifact && zip -r ../jof-launcher-windows.zip jof-launcher
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/jof-launcher-linux.tar.gz
             dist/jof-launcher-macos.dmg
+            dist/jof-launcher-windows-setup.exe
+            dist/jof-launcher-windows.zip
             dist/deb/*.deb
           draft: false
           prerelease: false
@@ -221,6 +224,10 @@ jobs:
           aws s3 cp dist/jof-launcher-linux.tar.gz s3://jof-cloud/launcher/ \
             --cache-control "$LATEST_CACHE" --only-show-errors
           aws s3 cp dist/jof-launcher-macos.dmg s3://jof-cloud/launcher/ \
+            --cache-control "$LATEST_CACHE" --only-show-errors
+          aws s3 cp dist/jof-launcher-windows-setup.exe s3://jof-cloud/launcher/ \
+            --cache-control "$LATEST_CACHE" --only-show-errors
+          aws s3 cp dist/jof-launcher-windows.zip s3://jof-cloud/launcher/ \
             --cache-control "$LATEST_CACHE" --only-show-errors
 
           # Versioned .deb, e.g. jof-launcher_1.1.6_amd64.deb
@@ -253,6 +260,9 @@ jobs:
           aws s3 cp dist/jof-launcher-linux.tar.gz \
             "s3://jof-cloud/launcher/jof-launcher-linux-${VERSION}.tar.gz" \
             --cache-control "$IMMUTABLE_CACHE" --only-show-errors
+          aws s3 cp dist/jof-launcher-windows-setup.exe \
+            "s3://jof-cloud/launcher/jof-launcher-windows-setup-${VERSION}.exe" \
+            --cache-control "$IMMUTABLE_CACHE" --only-show-errors
 
           DEB_FILE="$(ls dist/deb/*_amd64.deb | head -n1)"
 
@@ -271,6 +281,9 @@ jobs:
             --arg debUrl     "https://cloud.jof.app/launcher/$(basename "$DEB_FILE")" \
             --arg debSha     "$(sha256sum "$DEB_FILE" | cut -d' ' -f1)" \
             --argjson debSize "$(stat -c%s "$DEB_FILE")" \
+            --arg winUrl     "https://cloud.jof.app/launcher/jof-launcher-windows-setup-${VERSION}.exe" \
+            --arg winSha     "$(sha256sum dist/jof-launcher-windows-setup.exe | cut -d' ' -f1)" \
+            --argjson winSize "$(stat -c%s dist/jof-launcher-windows-setup.exe)" \
             '{
               schema: 1,
               version: $version,
@@ -280,7 +293,8 @@ jobs:
               artifacts: {
                 macos:    { url: $macUrl, sha256: $macSha, size: $macSize },
                 linuxTar: { url: $tarUrl, sha256: $tarSha, size: $tarSize },
-                linuxDeb: { url: $debUrl, sha256: $debSha, size: $debSize }
+                linuxDeb: { url: $debUrl, sha256: $debSha, size: $debSize },
+                windows:  { url: $winUrl, sha256: $winSha, size: $winSize }
               }
             }' > latest.json
 

@@ -24,19 +24,23 @@ import 'settings_service.dart';
 class SystemArchService {
   final SettingsService _settingsService;
   final Future<String?> Function()? _unameOverride;
+  final Map<String, String>? _environmentOverride;
 
   /// `uname -m` cannot change while the process lives, so the first answer is
   /// reused. The launch path re-resolves on every five-second game-status
   /// poll, and spawning a process that often for a constant is wasteful.
   Future<String?>? _unameResult;
 
-  /// [unameOverride] stands in for `uname -m` in tests, which run on the host
-  /// platform rather than the one being exercised.
+  /// [unameOverride] stands in for `uname -m`, and [environmentOverride] for
+  /// the process environment Windows detection reads, in tests, which run on
+  /// the host platform rather than the one being exercised.
   SystemArchService({
     SettingsService? settingsService,
     Future<String?> Function()? unameOverride,
+    Map<String, String>? environmentOverride,
   })  : _settingsService = settingsService ?? SettingsService(),
-        _unameOverride = unameOverride;
+        _unameOverride = unameOverride,
+        _environmentOverride = environmentOverride;
 
   /// Maps a `uname -m` value to a macOS architecture, or null when it names
   /// something we have no client build for.
@@ -54,6 +58,17 @@ class SystemArchService {
     return value.trim().toLowerCase().contains('64')
         ? LinuxSystemArch.bit64
         : LinuxSystemArch.bit32;
+  }
+
+  /// Maps a Windows `PROCESSOR_ARCHITECTURE` value to the client build to
+  /// install. Only a genuinely 32-bit Windows gets the 32-bit client; ARM64
+  /// Windows runs the x86_64 build under emulation.
+  static WindowsSystemArch? parseWindowsProcessorArchitecture(String value) {
+    return switch (value.trim().toUpperCase()) {
+      'AMD64' || 'ARM64' || 'IA64' => WindowsSystemArch.bit64,
+      'X86' => WindowsSystemArch.bit32,
+      _ => null,
+    };
   }
 
   Future<String?> _uname() => _unameResult ??= _runUname();
@@ -87,6 +102,26 @@ class SystemArchService {
     final output = await _uname();
     return output == null ? null : parseLinuxUname(output);
   }
+
+  /// The architecture of this Windows install, or null when the environment
+  /// does not say.
+  ///
+  /// `PROCESSOR_ARCHITEW6432` is checked first: it is only set for a 32-bit
+  /// process on 64-bit Windows, where `PROCESSOR_ARCHITECTURE` reports `x86`
+  /// for the process rather than the machine.
+  WindowsSystemArch? detectWindows() {
+    final env = _environmentOverride ??
+        (!kIsWeb && io.Platform.isWindows ? io.Platform.environment : null);
+    if (env == null) return null;
+    final value =
+        env['PROCESSOR_ARCHITEW6432'] ?? env['PROCESSOR_ARCHITECTURE'];
+    return value == null ? null : parseWindowsProcessorArchitecture(value);
+  }
+
+  /// The Windows architecture to install and launch for. 64-bit is the safe
+  /// default: 32-bit-only Windows is all but extinct.
+  WindowsSystemArch resolveWindows() =>
+      detectWindows() ?? WindowsSystemArch.bit64;
 
   /// The macOS architecture to install and launch for, or null when neither
   /// detection nor an earlier manual choice supplies one — the only case in

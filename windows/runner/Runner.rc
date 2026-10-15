@@ -92,9 +92,9 @@ BEGIN
             VALUE "CompanyName", "JoF" "\0"
             VALUE "FileDescription", "JoF Launcher" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "joflauncher" "\0"
+            VALUE "InternalName", "jof-launcher" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 JoF." "\0"
-            VALUE "OriginalFilename", "joflauncher.exe" "\0"
+            VALUE "OriginalFilename", "jof-launcher.exe" "\0"
             VALUE "ProductName", "JoF Launcher" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END

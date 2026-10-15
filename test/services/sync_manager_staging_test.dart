@@ -9,23 +9,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class TestCloudService extends CloudService {
   @override
-  Future<void> downloadAndExtractLinuxFiles(
-    String gameDataPath, {
+  Future<void> syncClientFiles(
+    String installRoot, {
+    String? currentInstallPath,
     Function(String name, double progress)? onProgress,
     void Function(String status)? onStatus,
     bool Function()? isCancelled,
   }) async {
-    // No-op for tests: real implementation downloads a zip over HTTP.
-  }
-
-  @override
-  Future<void> downloadAndExtractMacosFiles(
-    String gameDataPath, {
-    Function(String name, double progress)? onProgress,
-    void Function(String status)? onStatus,
-    bool Function()? isCancelled,
-  }) async {
-    // No-op for tests: real implementation downloads a zip over HTTP.
+    // No-op for tests: real implementation downloads an archive over HTTP.
   }
 
   @override

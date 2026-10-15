@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'dart:io' as io;
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
+
+import 'secure_http_client.dart';
 
 class ServerTrackerData {
   final bool online;
@@ -36,25 +36,7 @@ class ServerTrackerData {
 class ServerTrackerService {
   static const String apiUrl = 'https://api.jofhub.eu/server/tracker/gettrackerdata';
 
-  /// Creates an HTTP client with proper certificate handling for Windows
-  http.Client _createHttpClient() {
-    if (kIsWeb) {
-      return http.Client();
-    }
-    
-    final ioClient = io.HttpClient();
-    if (io.Platform.isWindows) {
-      // On Windows, certificate verification can fail due to missing certificate chain.
-      // This callback allows the connection while still performing basic validation.
-      // Restricted to Windows only: macOS/Linux use the default strict TLS validation.
-      ioClient.badCertificateCallback = (io.X509Certificate cert, String host, int port) {
-        // Only allow for our specific API domain
-        return host == 'api.jofhub.eu';
-      };
-    }
-
-    return IOClient(ioClient);
-  }
+  http.Client _createHttpClient() => createSecureHttpClient();
 
   Future<ServerTrackerData> fetchTrackerData() async {
     final client = _createHttpClient();

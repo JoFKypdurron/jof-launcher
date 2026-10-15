@@ -100,6 +100,40 @@ void main() {
     expect(calls, 1);
   });
 
+  group('SystemArchService Windows detection', () {
+    WindowsSystemArch? detect(Map<String, String> env) =>
+        SystemArchService(environmentOverride: env).detectWindows();
+
+    test('maps PROCESSOR_ARCHITECTURE values to a client build', () {
+      expect(detect({'PROCESSOR_ARCHITECTURE': 'AMD64'}),
+          WindowsSystemArch.bit64);
+      expect(detect({'PROCESSOR_ARCHITECTURE': 'x86'}), WindowsSystemArch.bit32);
+    });
+
+    // There is no ARM64 client; Windows on ARM runs the x86_64 build emulated.
+    test('runs the 64-bit build on ARM64', () {
+      expect(detect({'PROCESSOR_ARCHITECTURE': 'ARM64'}),
+          WindowsSystemArch.bit64);
+    });
+
+    // A 32-bit process on 64-bit Windows sees PROCESSOR_ARCHITECTURE=x86.
+    test('prefers PROCESSOR_ARCHITEW6432, which describes the machine', () {
+      expect(
+        detect({
+          'PROCESSOR_ARCHITECTURE': 'x86',
+          'PROCESSOR_ARCHITEW6432': 'AMD64',
+        }),
+        WindowsSystemArch.bit64,
+      );
+    });
+
+    test('defaults to 64-bit when the environment says nothing', () {
+      expect(detect(const {}), isNull);
+      expect(SystemArchService(environmentOverride: const {}).resolveWindows(),
+          WindowsSystemArch.bit64);
+    });
+  });
+
   group('SystemArchService.resolveLinux', () {
     // Unlike macOS, the Linux dropdown is always offered, so a stored value is
     // a deliberate choice: running the 32-bit client on a 64-bit machine.

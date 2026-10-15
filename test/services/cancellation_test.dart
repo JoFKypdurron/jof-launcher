@@ -14,6 +14,9 @@ class MockCloudService extends Fake implements CloudService {
   MockCloudService({this.verificationResponses, this.delay});
 
   @override
+  bool get supportsClientFiles => false;
+
+  @override
   Future<AssetStatus> getAssetStatus(Asset asset, String downloadDir) async {
     verificationCallCount++;
     if (delay != null) {

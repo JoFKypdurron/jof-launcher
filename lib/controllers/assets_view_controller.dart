@@ -159,7 +159,10 @@ class AssetsViewController {
           (status == AssetStatus.downloaded || status == AssetStatus.needsUpdate);
     }).toList();
 
-    if (assetsToDownload.isEmpty && assetsToDelete.isEmpty) {
+    if (assetsToDownload.isEmpty &&
+        assetsToDelete.isEmpty &&
+        (!_cloudService.supportsClientFiles ||
+            await _cloudService.isClientUpToDate(fetchedGameDataPath))) {
       return SyncResult(SyncResultType.alreadyInSync);
     }
 

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:joflauncher/services/cloud_service.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   group('CloudService.resolveExtractTargetPath', () {
@@ -11,7 +12,7 @@ void main() {
         filename: 'EternalJK/uix86_64.so',
         baseFolderName: 'base',
       );
-      expect(path, '/game/GameData/EternalJK/uix86_64.so');
+      expect(p.normalize(path), p.normalize('/game/GameData/EternalJK/uix86_64.so'));
     });
 
     test('maps GameData/ entries to gameDataPath root', () {
@@ -20,7 +21,7 @@ void main() {
         filename: 'GameData/eternaljk.x86_64',
         baseFolderName: 'base',
       );
-      expect(path, '/game/GameData/eternaljk.x86_64');
+      expect(p.normalize(path), p.normalize('/game/GameData/eternaljk.x86_64'));
     });
 
     test('maps base/ entries into the configured base folder name', () {
@@ -29,7 +30,7 @@ void main() {
         filename: 'base/jof.pk3',
         baseFolderName: 'Base',
       );
-      expect(path, '/game/GameData/Base/jof.pk3');
+      expect(p.normalize(path), p.normalize('/game/GameData/Base/jof.pk3'));
     });
 
     test('maps Base/ entries into the configured base folder name', () {
@@ -38,7 +39,7 @@ void main() {
         filename: 'Base/jof.pk3',
         baseFolderName: 'base',
       );
-      expect(path, '/game/GameData/base/jof.pk3');
+      expect(p.normalize(path), p.normalize('/game/GameData/base/jof.pk3'));
     });
 
     test('does not special-case root base* filenames', () {
@@ -47,7 +48,7 @@ void main() {
         filename: 'base_assets.pk3',
         baseFolderName: 'base',
       );
-      expect(path, '/game/GameData/base_assets.pk3');
+      expect(p.normalize(path), p.normalize('/game/GameData/base_assets.pk3'));
     });
 
     test('leaves other root filenames at gameDataPath root', () {
@@ -56,7 +57,7 @@ void main() {
         filename: 'eternaljk.x86_64',
         baseFolderName: 'base',
       );
-      expect(path, '/game/GameData/eternaljk.x86_64');
+      expect(p.normalize(path), p.normalize('/game/GameData/eternaljk.x86_64'));
     });
 
     test('rejects a root-level traversal entry', () {
