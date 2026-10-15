@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/backup_restore_view_controller.dart';
+import '../theme/jof_tokens.dart';
+import '../widgets/jof/jof_primitives.dart';
 
 class BackupRestoreView extends StatefulWidget {
   const BackupRestoreView({super.key});
@@ -40,7 +42,10 @@ class _BackupRestoreViewState extends State<BackupRestoreView> {
 
     if (!result.isOk) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.errorMessage ?? 'Restore failed'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text(result.errorMessage ?? 'Restore failed'),
+          backgroundColor: JofColors.danger,
+        ),
       );
       return;
     }
@@ -55,7 +60,9 @@ class _BackupRestoreViewState extends State<BackupRestoreView> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: failedCount == 0 ? Colors.green : Colors.orange,
+        backgroundColor: failedCount == 0
+            ? JofColors.successSurface
+            : JofColors.warningSurface,
       ),
     );
   }
@@ -63,8 +70,8 @@ class _BackupRestoreViewState extends State<BackupRestoreView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Recover Backup'),
+      appBar: JofTopBar(
+        title: 'Recover backup',
         actions: [
           IconButton(
             onPressed: _controller.isLoading ? null : _controller.load,
@@ -74,38 +81,49 @@ class _BackupRestoreViewState extends State<BackupRestoreView> {
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(JofSpace.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (_controller.errorMessage != null) ...[
-              Text(_controller.errorMessage!, style: const TextStyle(color: Colors.red)),
+              Text(
+                _controller.errorMessage!,
+                style: const TextStyle(color: JofColors.dangerText),
+              ),
               const SizedBox(height: 12),
             ] else ...[
               const Text(
                 'Select backup files to restore into your local EternalJK folder.',
-                style: TextStyle(color: Colors.grey),
+                style: TextStyle(color: JofColors.textMuted),
               ),
               const SizedBox(height: 12),
             ],
             Row(
               children: [
                 TextButton(
-                  onPressed: _controller.isLoading ? null : _controller.selectAll,
+                  onPressed: _controller.isLoading
+                      ? null
+                      : _controller.selectAll,
                   child: const Text('SELECT ALL'),
                 ),
                 const SizedBox(width: 8),
                 TextButton(
-                  onPressed: _controller.isLoading ? null : _controller.selectNone,
+                  onPressed: _controller.isLoading
+                      ? null
+                      : _controller.selectNone,
                   child: const Text('SELECT NONE'),
                 ),
                 const Spacer(),
                 ElevatedButton.icon(
-                  onPressed: (_controller.isLoading || _controller.selectedFilenames.isEmpty)
+                  onPressed:
+                      (_controller.isLoading ||
+                          _controller.selectedFilenames.isEmpty)
                       ? null
                       : _restoreSelected,
                   icon: const Icon(Icons.download),
-                  label: Text('RESTORE (${_controller.selectedFilenames.length})'),
+                  label: Text(
+                    'RESTORE (${_controller.selectedFilenames.length})',
+                  ),
                 ),
               ],
             ),
@@ -114,25 +132,32 @@ class _BackupRestoreViewState extends State<BackupRestoreView> {
               child: _controller.isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _controller.remoteFiles.isEmpty
-                      ? const Center(child: Text('No remote backup files found.'))
-                      : ListView.separated(
-                          itemCount: _controller.remoteFiles.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final entry = _controller.remoteFiles[index];
-                            final selected = _controller.selectedFilenames.contains(entry.filename);
-                            return CheckboxListTile(
-                              value: selected,
-                              onChanged: (value) {
-                                _controller.toggleSelected(entry.filename, value ?? false);
-                              },
-                              title: Text(entry.filename),
-                              subtitle: Text('Backed up: ${_formatBackedUpAt(context, entry.backedUpAt)}'),
-                              controlAffinity: ListTileControlAffinity.leading,
-                              contentPadding: EdgeInsets.zero,
+                  ? const Center(child: Text('No remote backup files found.'))
+                  : ListView.separated(
+                      itemCount: _controller.remoteFiles.length,
+                      separatorBuilder: (_, _) => const Divider(),
+                      itemBuilder: (context, index) {
+                        final entry = _controller.remoteFiles[index];
+                        final selected = _controller.selectedFilenames.contains(
+                          entry.filename,
+                        );
+                        return CheckboxListTile(
+                          value: selected,
+                          onChanged: (value) {
+                            _controller.toggleSelected(
+                              entry.filename,
+                              value ?? false,
                             );
                           },
-                        ),
+                          title: Text(entry.filename),
+                          subtitle: Text(
+                            'Backed up: ${_formatBackedUpAt(context, entry.backedUpAt)}',
+                          ),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: EdgeInsets.zero,
+                        );
+                      },
+                    ),
             ),
           ],
         ),

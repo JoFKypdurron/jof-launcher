@@ -4,7 +4,6 @@ import 'package:file_picker/file_picker.dart';
 import '../models/client_channel.dart';
 import '../models/platform_arch.dart';
 import '../models/repository_source.dart';
-import '../services/log_service.dart';
 import '../services/settings_service.dart';
 import '../services/system_arch_service.dart';
 
@@ -24,7 +23,6 @@ class SettingsViewController {
   bool macosSystemArchNeedsSelection = false;
   ClientChannel clientChannel = ClientChannel.stable;
   RepositorySource repositorySource = RepositorySource.auto;
-  String? logFilePath;
 
   final void Function() onStateChanged;
 
@@ -37,17 +35,20 @@ class SettingsViewController {
     updateCheckEnabled = await _settingsService.getUpdateCheckEnabled();
     enableCloudBackup = await _settingsService.getEnableCloudBackup();
     cloudBackupId = await _settingsService.getCloudBackupId();
-    clientChannel = ClientChannelCodec.tryParse(await _settingsService.getClientChannel()) ??
+    clientChannel =
+        ClientChannelCodec.tryParse(
+          await _settingsService.getClientChannel(),
+        ) ??
         ClientChannel.stable;
-    repositorySource = RepositorySourceCodec.tryParse(
-            await _settingsService.getRepositorySource()) ??
+    repositorySource =
+        RepositorySourceCodec.tryParse(
+          await _settingsService.getRepositorySource(),
+        ) ??
         RepositorySource.auto;
 
     // Publish settings-derived state immediately so the UI (and widget tests) can
     // reflect preferences even if platform detection is slow.
     onStateChanged();
-
-    logFilePath = await LogService.instance.logFilePath();
 
     if (!kIsWeb && Platform.isLinux) {
       linuxSystemArch = await _systemArch.resolveLinux();
@@ -99,7 +100,8 @@ class SettingsViewController {
         onStateChanged();
         return PickDirectoryResult.success();
       } else {
-        String errorMessage = 'Selected directory must contain "GameData" or "Game Data"';
+        String errorMessage =
+            'Selected directory must contain "GameData" or "Game Data"';
         if (!kIsWeb && !Directory(selectedDirectory).existsSync()) {
           errorMessage = 'Selected directory does not exist';
         }
@@ -112,9 +114,11 @@ class SettingsViewController {
   String? getGameDataPathError(String? path) {
     if (path == null || path.isEmpty) return 'No location selected';
     final lowerPath = path.toLowerCase();
-    final hasGameData = lowerPath.contains('gamedata') || lowerPath.contains('game data');
+    final hasGameData =
+        lowerPath.contains('gamedata') || lowerPath.contains('game data');
     if (!hasGameData) return 'Must contain "GameData" or "Game Data"';
-    if (!kIsWeb && !Directory(path).existsSync()) return 'Directory does not exist';
+    if (!kIsWeb && !Directory(path).existsSync())
+      return 'Directory does not exist';
     return null;
   }
 
@@ -166,16 +170,16 @@ class PickDirectoryResult {
   final String? errorMessage;
 
   PickDirectoryResult.success()
-      : isSuccess = true,
-        isCancelled = false,
-        errorMessage = null;
+    : isSuccess = true,
+      isCancelled = false,
+      errorMessage = null;
 
   PickDirectoryResult.cancelled()
-      : isSuccess = false,
-        isCancelled = true,
-        errorMessage = null;
+    : isSuccess = false,
+      isCancelled = true,
+      errorMessage = null;
 
   PickDirectoryResult.error(this.errorMessage)
-      : isSuccess = false,
-        isCancelled = false;
+    : isSuccess = false,
+      isCancelled = false;
 }
