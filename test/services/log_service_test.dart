@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:joflauncher/services/log_service.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   late Directory tempDir;
@@ -21,15 +22,16 @@ void main() {
     log.log('repo', 'second');
     await log.flush();
 
-    final lines = await File('${tempDir.path}/${LogService.fileName}').readAsLines();
+    final path = p.join(tempDir.path, LogService.fileName);
+    final lines = await File(path).readAsLines();
     expect(lines, hasLength(2));
     expect(lines[0], endsWith('[repo] first'));
     expect(lines[1], endsWith('[repo] second'));
-    expect(await log.logFilePath(), '${tempDir.path}/${LogService.fileName}');
+    expect(await log.logFilePath(), path);
   });
 
   test('rotates a full log to .1, replacing the older one', () async {
-    final file = File('${tempDir.path}/${LogService.fileName}');
+    final file = File(p.join(tempDir.path, LogService.fileName));
     await file.writeAsString('x' * LogService.maxBytes);
     await File('${file.path}.1').writeAsString('oldest');
     final log = LogService(resolveDirectory: () async => tempDir);

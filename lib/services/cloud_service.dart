@@ -1303,7 +1303,10 @@ class CloudService {
   /// macOS client is packaged as `.app` and is not handled via an allowlist.
   @visibleForTesting
   static bool isStaticManagedLinuxClientRelativePath(String relativePath) {
-    return _linuxStaticManagedRelativePaths.contains(p.normalize(relativePath));
+    // Linux paths, so always POSIX-normalized, also on a Windows host whose
+    // `p` would rewrite `/` to `\`.
+    return _linuxStaticManagedRelativePaths
+        .contains(p.posix.normalize(relativePath));
   }
 }
 
