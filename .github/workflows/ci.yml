@@ -23,6 +23,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          cache: true
 
       - name: Get Flutter dependencies
         run: flutter pub get
@@ -35,9 +36,47 @@ jobs:
       - name: Run tests
         run: flutter test
 
-  # Builds the Windows app on every PR, so a change that breaks the Windows
-  # build is caught before it reaches a release.
+      # Release builds of every shipped platform run on PRs only: the Linux one
+      # here, macOS and Windows in their own jobs. Each merge to main is tagged
+      # and released straight away, so a broken platform build must fail here:
+      # in release.yml it would leave a tag behind with no release. Pushes to
+      # main skip them, because release.yml builds the same commit right after.
+      - name: Install Linux build dependencies
+        if: github.event_name == 'pull_request'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+
+      - name: Build Linux release
+        if: github.event_name == 'pull_request'
+        run: flutter build linux --release
+
+  # macOS and Windows release builds, on PRs only (see "Build Linux release").
+  macos:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build macOS release
+        run: flutter build macos --release
+
   windows:
+    if: github.event_name == 'pull_request'
     runs-on: windows-latest
 
     steps:
@@ -48,6 +87,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          cache: true
 
       - name: Get Flutter dependencies
         run: flutter pub get
@@ -57,4 +97,3 @@ jobs:
 
       - name: Build Windows release
         run: flutter build windows --release
-
