@@ -11,10 +11,15 @@ class UrlOpenerService {
   final Future<ProcessResult> Function(String executable, List<String> args)
       _runProcess;
 
+  /// Test seam, so every platform's command can be checked from one host.
+  final String? _operatingSystemOverride;
+
   UrlOpenerService({
     Future<ProcessResult> Function(String executable, List<String> args)?
         runProcess,
-  }) : _runProcess = runProcess ?? Process.run;
+    String? operatingSystemOverride,
+  })  : _runProcess = runProcess ?? Process.run,
+        _operatingSystemOverride = operatingSystemOverride;
 
   /// Returns false if the URL could not be opened, so the caller can fall back
   /// to putting it on the clipboard.
@@ -22,16 +27,19 @@ class UrlOpenerService {
     if (kIsWeb) return false;
     if (!_isSafeUrl(url)) return false;
 
-    final executable = switch (Platform.operatingSystem) {
-      'macos' => 'open',
-      'linux' => 'xdg-open',
-      'windows' => 'explorer',
+    final command = switch (_operatingSystemOverride ?? Platform.operatingSystem) {
+      'macos' => ('open', [url]),
+      'linux' => ('xdg-open', [url]),
+      // Not `explorer <url>`, which exits with 1 even when the browser opened,
+      // so every success would read as a failure. Nor `cmd /c start`, which
+      // would hand the URL to cmd's parser, where `&` splits commands.
+      'windows' => ('rundll32', ['url.dll,FileProtocolHandler', url]),
       _ => null,
     };
-    if (executable == null) return false;
+    if (command == null) return false;
 
     try {
-      final result = await _runProcess(executable, [url]);
+      final result = await _runProcess(command.$1, command.$2);
       return result.exitCode == 0;
     } catch (_) {
       return false;

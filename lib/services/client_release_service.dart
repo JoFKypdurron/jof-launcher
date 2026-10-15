@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/client_channel.dart';
 import '../models/platform_arch.dart';
+import 'secure_http_client.dart';
 
 /// Resolves which EternalJK client build to install, and where to fetch it.
 ///
@@ -48,7 +49,7 @@ class ClientReleaseService {
         _now = now ?? DateTime.now;
 
   http.Client _createHttpClient() =>
-      _httpClientFactory?.call() ?? http.Client();
+      _httpClientFactory?.call() ?? createSecureHttpClient();
 
   /// The release asset filename for a Linux [arch].
   static String linuxAssetName(LinuxSystemArch arch) {

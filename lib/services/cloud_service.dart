@@ -1,15 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:io' as io show Directory, File, HttpClient, X509Certificate, SecurityContext, Process, FileSystemEntity, FileSystemEntityType, Platform, Request, BadCertificateCallback, IOSink, FileMode, FileSystemException, RandomAccessFile, SocketException, HttpException;
+import 'dart:io' as io show Directory, File, SecurityContext, Process, FileSystemEntity, FileSystemEntityType, Platform, Request, BadCertificateCallback, IOSink, FileMode, FileSystemException, RandomAccessFile, SocketException, HttpException;
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/asset.dart';
 import '../models/asset_group.dart';
 import '../models/client_channel.dart';
 import '../models/platform_arch.dart';
 import 'client_release_service.dart';
+import 'secure_http_client.dart';
 import 'connectivity_service.dart';
 import 'settings_service.dart';
 import 'system_arch_service.dart';
@@ -182,37 +182,12 @@ class CloudService {
   /// state, so firing it per network chunk (thousands per file) is wasteful.
   static const Duration _progressInterval = Duration(milliseconds: 100);
 
-  /// Creates an HTTP client with proper certificate handling for Windows
   http.Client _createHttpClient() {
     final factory = _httpClientFactory;
     if (factory != null) {
       return factory();
     }
-    if (kIsWeb) {
-      return http.Client();
-    }
-
-    final ioClient = io.HttpClient();
-    ioClient.connectionTimeout = _connectTimeout;
-    if (io.Platform.isWindows) {
-      // On Windows, certificate verification can fail due to missing certificate chain.
-      // This callback allows the connection while still performing basic validation.
-      // Restricted to Windows only: macOS/Linux use the default strict TLS validation.
-      ioClient.badCertificateCallback = (io.X509Certificate cert, String host, int port) {
-        // Only allow for our specific domains (API and asset downloads).
-        // The github.com hosts serve the EternalJK client releases; a download
-        // there redirects to release-assets.githubusercontent.com.
-        return host == 'api.jofhub.eu' ||
-            host == 'jofhub.eu' ||
-            host == 'cloud.jof.app' ||
-            host == 'github.com' ||
-            host == 'api.github.com' ||
-            host == 'objects.githubusercontent.com' ||
-            host == 'release-assets.githubusercontent.com';
-      };
-    }
-
-    return IOClient(ioClient);
+    return createSecureHttpClient(connectionTimeout: _connectTimeout);
   }
 
   Future<AssetStatus> getAssetStatus(Asset asset, String downloadDir) async {
