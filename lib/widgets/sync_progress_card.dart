@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/jof_tokens.dart';
+
 class SyncProgressCard extends StatelessWidget {
   final String assetName;
   final double progress;
@@ -35,7 +37,7 @@ class SyncProgressCard extends StatelessWidget {
                     IconButton(
                       icon: const Icon(
                         Icons.cancel,
-                        color: Colors.redAccent,
+                        color: JofColors.dangerText,
                         size: 20,
                       ),
                       onPressed: onCancel,

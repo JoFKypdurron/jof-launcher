@@ -6,17 +6,22 @@ class ColorTokenizedText extends StatelessWidget {
 
   const ColorTokenizedText({super.key, required this.text, this.style});
 
+  /// Quake 3 colour codes (`^0`–`^9`).
+  ///
+  /// Tuned from the engine's pure RGB values to stay readable on the dark
+  /// surfaces, matching the player list in the JoF design files: black is
+  /// lifted to a mid grey and pure red and blue are lightened.
   static const Map<String, Color> colorMap = {
-    '0': Color(0xFF000000), // BLACK
-    '1': Color(0xFFFF0000), // RED
-    '2': Color(0xFF00AA00), // GREEN
-    '3': Color(0xFFFFFF00), // YELLOW
-    '4': Color(0xFF0000FF), // BLUE
-    '5': Color(0xFF00FFFF), // CYAN
-    '6': Color(0xFFFF00FF), // MAGENTA
+    '0': Color(0xFF7A7A7A), // BLACK
+    '1': Color(0xFFFF5C5C), // RED
+    '2': Color(0xFF3EE05A), // GREEN
+    '3': Color(0xFFFFD400), // YELLOW
+    '4': Color(0xFF7D93FF), // BLUE
+    '5': Color(0xFF00E5FF), // CYAN
+    '6': Color(0xFFFF66FF), // MAGENTA
     '7': Color(0xFFFFFFFF), // WHITE
     '8': Color(0xFFFFA500), // ORANGE
-    '9': Color(0xFF808080), // GREY
+    '9': Color(0xFF9B9B9B), // GREY
   };
 
   @override

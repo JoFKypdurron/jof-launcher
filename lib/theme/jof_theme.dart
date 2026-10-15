@@ -172,6 +172,13 @@ ThemeData buildJofTheme() {
         overlayColor: const WidgetStatePropertyAll(Colors.transparent),
       ),
     ),
+    cardTheme: const CardThemeData(
+      color: JofColors.surface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: shape,
+    ),
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
       backgroundColor: JofColors.surfaceRaised,
       foregroundColor: JofColors.text,

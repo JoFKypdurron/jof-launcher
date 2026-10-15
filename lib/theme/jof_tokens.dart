@@ -119,9 +119,9 @@ abstract final class JofText {
 
   /// [style] at weight [w]; Saira needs the axis set alongside the weight.
   static TextStyle withWeight(TextStyle style, double w) => style.copyWith(
-        fontWeight: FontWeight.values[(w ~/ 100) - 1],
-        fontVariations: _wght(w),
-      );
+    fontWeight: FontWeight.values[(w ~/ 100) - 1],
+    fontVariations: _wght(w),
+  );
 
   /// App and screen titles in the top bar, box headers, tab labels.
   /// Always uppercase.
