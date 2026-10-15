@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import '../models/client_channel.dart';
 import '../models/platform_arch.dart';
+import '../models/repository_source.dart';
+import '../services/log_service.dart';
 import '../services/settings_service.dart';
 import '../services/system_arch_service.dart';
 
@@ -21,6 +23,8 @@ class SettingsViewController {
   MacosSystemArch? macosSystemArch;
   bool macosSystemArchNeedsSelection = false;
   ClientChannel clientChannel = ClientChannel.stable;
+  RepositorySource repositorySource = RepositorySource.auto;
+  String? logFilePath;
 
   final void Function() onStateChanged;
 
@@ -35,10 +39,15 @@ class SettingsViewController {
     cloudBackupId = await _settingsService.getCloudBackupId();
     clientChannel = ClientChannelCodec.tryParse(await _settingsService.getClientChannel()) ??
         ClientChannel.stable;
+    repositorySource = RepositorySourceCodec.tryParse(
+            await _settingsService.getRepositorySource()) ??
+        RepositorySource.auto;
 
     // Publish settings-derived state immediately so the UI (and widget tests) can
     // reflect preferences even if platform detection is slow.
     onStateChanged();
+
+    logFilePath = await LogService.instance.logFilePath();
 
     if (!kIsWeb && Platform.isLinux) {
       linuxSystemArch = await _systemArch.resolveLinux();
@@ -71,6 +80,12 @@ class SettingsViewController {
   Future<void> setClientChannel(ClientChannel value) async {
     await _settingsService.setClientChannel(value.persistedValue);
     clientChannel = value;
+    onStateChanged();
+  }
+
+  Future<void> setRepositorySource(RepositorySource value) async {
+    await _settingsService.setRepositorySource(value.persistedValue);
+    repositorySource = value;
     onStateChanged();
   }
 

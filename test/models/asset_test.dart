@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:joflauncher/models/asset.dart';
+import 'package:joflauncher/models/repository_source.dart';
 
 void main() {
   group('Asset', () {
@@ -140,43 +141,79 @@ void main() {
       });
     });
 
-    group('downloadUrl', () {
-      test('generates correct download URL', () {
-        final asset = Asset(
-          id: 1,
-          name: 'test.zip',
-          size: 1024,
-          hash: 'abc123',
-          groupId: 10,
-          description: 'Test asset',
-          targetFolder: 'target',
-          localFolder: 'mods/v1',
-          lastUpdate: DateTime.now(),
-        );
+    group('repositoryPath and download URLs', () {
+      Asset assetAt(String localFolder, String name) => Asset(
+            id: 1,
+            name: name,
+            size: 1024,
+            hash: 'abc123',
+            groupId: 10,
+            description: 'Test asset',
+            targetFolder: 'target',
+            localFolder: localFolder,
+            lastUpdate: DateTime(2024, 1, 1),
+          );
 
+      String originUrl(Asset a) =>
+          RepositoryEndpoint.origin.fileUri(a.repositoryPath).toString();
+      String mirrorUrl(Asset a) =>
+          RepositoryEndpoint.mirror.fileUri(a.repositoryPath).toString();
+
+      test('splits localFolder into segments followed by the name', () {
+        expect(assetAt('mods/v1', 'test.zip').repositoryPath,
+            ['mods', 'v1', 'test.zip']);
+        expect(assetAt('eternaljk/EternalJK', 'jofclient-win-x86.pk3').repositoryPath,
+            ['eternaljk', 'EternalJK', 'jofclient-win-x86.pk3']);
+      });
+
+      test('ignores empty segments from stray slashes', () {
+        expect(assetAt('/assets/', 'a.pk3').repositoryPath, ['assets', 'a.pk3']);
+        expect(assetAt('', 'a.pk3').repositoryPath, ['a.pk3']);
+      });
+
+      test('builds the origin URL unchanged from before', () {
         expect(
-          asset.downloadUrl,
+          originUrl(assetAt('mods/v1', 'test.zip')),
           'https://jofhub.eu/apps/cloud/repository/mods/v1/test.zip',
         );
       });
 
-      test('handles special characters in folder and name', () {
-        final asset = Asset(
-          id: 1,
-          name: 'test file.zip',
-          size: 1024,
-          hash: 'abc123',
-          groupId: 10,
-          description: 'Test asset',
-          targetFolder: 'target',
-          localFolder: 'folder/subfolder',
-          lastUpdate: DateTime.now(),
-        );
-
+      test('builds the mirror URL under the same relative path', () {
         expect(
-          asset.downloadUrl,
-          contains('folder/subfolder/test%20file.zip'),
+          mirrorUrl(assetAt('mods/v1', 'test.zip')),
+          'https://cloud.jof.app/cloud/repository/mods/v1/test.zip',
         );
+      });
+
+      const awkward = {
+        "{JoF}'s-GWing.pk3": "%7BJoF%7D's-GWing.pk3",
+        'Shree&Aldro Skin&Hilt.pk3': 'Shree&Aldro%20Skin&Hilt.pk3',
+        'senek_2017 .pk3': 'senek_2017%20.pk3',
+        'test file.zip': 'test%20file.zip',
+      };
+
+      for (final entry in awkward.entries) {
+        test('percent-encodes "${entry.key}" on both hosts', () {
+          final asset = assetAt('assets', entry.key);
+          expect(originUrl(asset),
+              'https://jofhub.eu/apps/cloud/repository/assets/${entry.value}');
+          expect(mirrorUrl(asset),
+              'https://cloud.jof.app/cloud/repository/assets/${entry.value}');
+        });
+      }
+
+      test('keeps slashes in a nested localFolder as path separators', () {
+        final asset = assetAt('eternaljk/EternalJK', 'jofclient-win-x86.pk3');
+        expect(mirrorUrl(asset),
+            'https://cloud.jof.app/cloud/repository/eternaljk/EternalJK/jofclient-win-x86.pk3');
+        expect(originUrl(asset),
+            'https://jofhub.eu/apps/cloud/repository/eternaljk/EternalJK/jofclient-win-x86.pk3');
+      });
+
+      test('encodes characters that would otherwise end the path', () {
+        final asset = assetAt('assets', 'odd #1?%20.pk3');
+        expect(mirrorUrl(asset),
+            'https://cloud.jof.app/cloud/repository/assets/odd%20%231%3F%2520.pk3');
       });
     });
 
