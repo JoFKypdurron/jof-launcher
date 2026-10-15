@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/asset.dart';
 import '../services/cloud_service.dart';
+import '../theme/jof_tokens.dart';
+import 'jof/jof_primitives.dart';
 
 class AssetListTile extends StatelessWidget {
   final Asset asset;
@@ -22,63 +24,70 @@ class AssetListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     String? statusText;
     Color? statusColor;
+    Color? labelColor;
     IconData? statusIcon;
 
     if (status == AssetStatus.downloaded || status == AssetStatus.needsUpdate) {
       if (!isSelected) {
-        statusText = 'To be Removed';
-        statusColor = Colors.red;
+        statusText = 'To be removed';
+        statusColor = JofColors.dangerText;
+        labelColor = JofColors.dangerText;
         statusIcon = Icons.delete_outline;
       } else if (status == AssetStatus.downloaded) {
         statusText = 'Downloaded';
-        statusColor = Colors.green;
-        statusIcon = Icons.check_circle;
+        statusColor = JofColors.highlight;
+        labelColor = JofColors.textMuted;
+        statusIcon = Icons.check;
       } else {
         statusText = 'Needs update';
-        statusColor = Colors.orange;
+        statusColor = JofColors.warning;
         statusIcon = Icons.update;
       }
     } else if (status == AssetStatus.stagedDownloaded) {
       statusText = 'Staged';
-      statusColor = Colors.purple;
+      statusColor = JofColors.highlight;
       statusIcon = Icons.inventory_2_outlined;
     } else if (status == AssetStatus.stagedForRemoval) {
       statusText = 'Staged for removal';
-      statusColor = Colors.deepOrange;
+      statusColor = JofColors.warning;
       statusIcon = Icons.inventory_2_outlined;
-    } else if (isSelected && (status == AssetStatus.notDownloaded || status == null)) {
-      statusText = 'To be Downloaded';
-      statusColor = Colors.blue;
+    } else if (isSelected &&
+        (status == AssetStatus.notDownloaded || status == null)) {
+      statusText = 'To be downloaded';
+      statusColor = JofColors.highlight;
       statusIcon = Icons.download_for_offline;
     }
 
-    final bool isNarrow = MediaQuery.of(context).size.width < 800;
-
     return CheckboxListTile(
-      visualDensity: isNarrow ? VisualDensity(horizontal: -4, vertical: -2) : null,
-      contentPadding: isNarrow 
-          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 0)
-          : null,
-      dense: isNarrow,
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.trailing,
       title: Row(
         children: [
-          Text(asset.name),
+          Expanded(
+            child: Text(
+              asset.name,
+              overflow: TextOverflow.ellipsis,
+              style: JofText.bodyMedium,
+            ),
+          ),
           if (statusText != null) ...[
-            const SizedBox(width: 8),
-            Icon(statusIcon, size: 16, color: statusColor),
-            const SizedBox(width: 4),
-            Text(
-              statusText,
-              style: TextStyle(
-                fontSize: 12,
-                color: statusColor,
-                fontWeight: FontWeight.bold,
+            const SizedBox(width: JofSpace.md),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 180),
+              child: JofStatus(
+                icon: statusIcon!,
+                iconColor: statusColor!,
+                label: statusText,
+                labelColor: labelColor,
               ),
             ),
           ],
         ],
       ),
-      subtitle: Text(asset.description),
+      subtitle: Text(
+        asset.description,
+        style: JofText.caption.copyWith(color: JofColors.textMuted),
+      ),
       value: isSelected,
       onChanged: isDisabled ? null : (_) => onToggle(),
     );

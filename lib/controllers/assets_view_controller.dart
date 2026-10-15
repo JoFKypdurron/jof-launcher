@@ -132,10 +132,9 @@ class AssetsViewController {
     return _selectionManager.getPendingChangesCount(data!, assetStatuses);
   }
 
-  String get pendingChangesText {
-    if (data == null) return '0';
-    final changes = _selectionManager.getPendingChanges(data!, assetStatuses);
-    return '+${changes.downloads} / -${changes.removals}';
+  ({int downloads, int removals}) get pendingChanges {
+    if (data == null) return (downloads: 0, removals: 0);
+    return _selectionManager.getPendingChanges(data!, assetStatuses);
   }
 
   Future<SyncResult> startSync() async {

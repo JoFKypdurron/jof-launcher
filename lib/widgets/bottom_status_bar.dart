@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum BottomStatusSeverity {
-  info,
-  warning,
-  error,
-}
+enum BottomStatusSeverity { info, warning, error }
 
 class BottomStatusBar extends StatelessWidget {
   final IconData icon;
@@ -72,7 +68,9 @@ class BottomStatusBar extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(8.0),
         child: MouseRegion(
-          cursor: onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          cursor: onTap != null
+              ? SystemMouseCursors.click
+              : SystemMouseCursors.basic,
           child: GestureDetector(
             onTap: onTap,
             child: Container(
@@ -112,7 +110,11 @@ class BottomStatusBar extends StatelessWidget {
                       ],
                       if (onClose != null)
                         IconButton(
-                          icon: const Icon(Icons.close, size: 18, color: Colors.white54),
+                          icon: const Icon(
+                            Icons.close,
+                            size: 18,
+                            color: Colors.white54,
+                          ),
                           onPressed: onClose,
                           tooltip: 'Dismiss',
                           constraints: const BoxConstraints(),

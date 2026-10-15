@@ -33,7 +33,11 @@ class SyncProgressCard extends StatelessWidget {
                   ),
                   if (onCancel != null)
                     IconButton(
-                      icon: const Icon(Icons.cancel, color: Colors.redAccent, size: 20),
+                      icon: const Icon(
+                        Icons.cancel,
+                        color: Colors.redAccent,
+                        size: 20,
+                      ),
                       onPressed: onCancel,
                       tooltip: 'Cancel sync',
                       constraints: const BoxConstraints(),

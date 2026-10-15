@@ -82,7 +82,7 @@ void main() {
       );
 
       expect(find.text('Downloaded'), findsOneWidget);
-      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsOneWidget);
     });
 
     testWidgets('shows needs update status with icon and text', (WidgetTester tester) async {
@@ -113,7 +113,7 @@ void main() {
 
       expect(find.text('Downloaded'), findsNothing);
       expect(find.text('Needs update'), findsNothing);
-      expect(find.byIcon(Icons.check_circle), findsNothing);
+      expect(find.byIcon(Icons.check), findsNothing);
       expect(find.byIcon(Icons.update), findsNothing);
     });
 
@@ -258,7 +258,7 @@ void main() {
       expect(find.text('test.zip'), findsOneWidget);
       expect(find.text('Test asset description'), findsOneWidget);
       expect(find.text('Downloaded'), findsOneWidget);
-      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsOneWidget);
 
       final checkbox = tester.widget<CheckboxListTile>(
         find.byType(CheckboxListTile),
@@ -278,7 +278,7 @@ void main() {
         ),
       );
 
-      expect(find.text('To be Removed'), findsOneWidget);
+      expect(find.text('To be removed'), findsOneWidget);
       expect(find.byIcon(Icons.delete_outline), findsOneWidget);
     });
 
@@ -293,7 +293,7 @@ void main() {
         ),
       );
 
-      expect(find.text('To be Removed'), findsOneWidget);
+      expect(find.text('To be removed'), findsOneWidget);
       expect(find.byIcon(Icons.delete_outline), findsOneWidget);
     });
 
@@ -308,7 +308,7 @@ void main() {
         ),
       );
 
-      expect(find.text('To be Downloaded'), findsOneWidget);
+      expect(find.text('To be downloaded'), findsOneWidget);
       expect(find.byIcon(Icons.download_for_offline), findsOneWidget);
     });
 
@@ -323,7 +323,7 @@ void main() {
         ),
       );
 
-      expect(find.text('To be Downloaded'), findsOneWidget);
+      expect(find.text('To be downloaded'), findsOneWidget);
       expect(find.byIcon(Icons.download_for_offline), findsOneWidget);
     });
 
