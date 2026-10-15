@@ -4,6 +4,9 @@ import '../controllers/home_view_controller.dart';
 import '../services/sync_status_service.dart';
 import '../widgets/color_tokenized_text.dart';
 import '../widgets/bottom_status_bar.dart';
+import '../widgets/jof/jof_box.dart';
+import '../widgets/jof/jof_primitives.dart';
+import '../theme/jof_tokens.dart';
 import 'assets_view.dart';
 import 'settings_view.dart';
 import 'info_view.dart';
@@ -12,11 +15,7 @@ class HomeView extends StatefulWidget {
   final HomeViewController? controller;
   final bool initializeOnStart;
 
-  const HomeView({
-    super.key,
-    this.controller,
-    this.initializeOnStart = true,
-  });
+  const HomeView({super.key, this.controller, this.initializeOnStart = true});
 
   @override
   State<HomeView> createState() => _HomeViewState();
@@ -29,7 +28,8 @@ class _HomeViewState extends State<HomeView> {
   @override
   void initState() {
     super.initState();
-    _controller = widget.controller ??
+    _controller =
+        widget.controller ??
         HomeViewController(
           onStateChanged: () {
             if (mounted) setState(() {});
@@ -54,11 +54,6 @@ class _HomeViewState extends State<HomeView> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final buttonWidth = screenWidth < 600 ? 250.0 : 300.0;
-
-    final isVertical = screenWidth < 800;
-
     final showBackupWarning =
         (_controller.lastBackupResult?.hadFailures ?? false) &&
         !(_controller.lastBackupResult?.skipped ?? true) &&
@@ -155,8 +150,10 @@ class _HomeViewState extends State<HomeView> {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                            content:
-                                Text('Could not open the browser. Link copied.')),
+                          content: Text(
+                            'Could not open the browser. Link copied.',
+                          ),
+                        ),
                       );
                     }
                   }
@@ -170,231 +167,31 @@ class _HomeViewState extends State<HomeView> {
       );
     }
 
-    Widget launchControls = Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        // Connect to public server checkbox and Launch button in different rows
-        SizedBox(
-          width: buttonWidth,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              CheckboxListTile(
-                title: const Text('Connect to public server'),
-                value: _controller.connectToPublic,
-                onChanged: (_controller.isLaunching ||
-                        syncStatus.isActive ||
-                        _controller.isGameRunning)
-                    ? null
-                    : (bool? value) async {
-                        if (value != null) {
-                          await _controller.setConnectToPublic(value);
-                        }
-                      },
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: (_controller.isLaunching ||
-                        syncStatus.isActive ||
-                        _controller.isGameRunning)
-                    ? null
-                    : () => _controller.launchGame(context),
-                icon: Icon(
-                    _controller.isGameRunning
-                        ? Icons.check_circle
-                        : Icons.play_arrow,
-                    size: 32),
-                label: Text(_controller.isLaunching
-                    ? 'Launching'
-                    : _controller.isGameRunning
-                        ? 'Game running'
-                        : 'Launch Game'),
-                style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 24),
-                    textStyle: const TextStyle(
-                        fontSize: 24, fontWeight: FontWeight.bold),
-                    fixedSize: Size(buttonWidth, 60)),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-
-    Widget playerList = _controller.trackerData == null
-        ? const Center(
-            child: Padding(
-            padding: EdgeInsets.all(16.0),
-            child: CircularProgressIndicator(),
-          ))
-        : _controller.trackerData!.players.isEmpty
-            ? const Center(
-                child: Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Text('No players online'),
-              ))
-            : ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                itemCount: _controller.trackerData!.players.length,
-                shrinkWrap: isVertical,
-                physics:
-                    isVertical ? const NeverScrollableScrollPhysics() : null,
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16.0,
-                      vertical: 2.0,
-                    ),
-                    child: ColorTokenizedText(
-                      text: _controller.trackerData!.players[index],
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                  );
-                },
-              );
-
-    Widget serverStatusCard = Container(
-      margin: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF03273C),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: isVertical ? MainAxisSize.min : MainAxisSize.max,
-        children: [
-          // Server status section
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Stack(
-              children: [
-                Column(
-                  children: [
-                    if (_controller.trackerData != null) ...[
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: _controller.trackerData!.online
-                                  ? Colors.green
-                                  : Colors.red,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _controller.trackerData!.online
-                                ? 'ONLINE'
-                                : 'OFFLINE',
-                            style: const TextStyle(
-                                fontSize: 18, fontWeight: FontWeight.w500),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      if (_controller.trackerData!.online) ...[
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 16,
-                          runSpacing: 4,
-                          children: [
-                            Text(
-                                'Map: ${_controller.trackerData!.map ?? 'Unknown'}'),
-                            Text(
-                                'Players: ${_controller.trackerData!.clients} / ${_controller.trackerData!.maxClients}'),
-                          ],
-                        ),
-                      ],
-                    ] else
-                      const Center(child: CircularProgressIndicator()),
-                  ],
-                ),
-                Positioned(
-                  right: 0,
-                  top: 0,
-                  child: IconButton(
-                    icon: const Icon(Icons.refresh, size: 20),
-                    onPressed: () => _controller.refreshTrackerData(),
-                    tooltip: 'Refresh status',
-                    constraints: const BoxConstraints(),
-                    padding: EdgeInsets.zero,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          // Players section
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: Text(
-              'PLAYERS',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ),
-          const Divider(height: 1),
-          isVertical ? playerList : Expanded(child: playerList),
-        ],
-      ),
-    );
-
-    Widget content = Flex(
-      direction: isVertical ? Axis.vertical : Axis.horizontal,
-      crossAxisAlignment:
-          isVertical ? CrossAxisAlignment.center : CrossAxisAlignment.stretch,
-      children: [
-        // Left side: Launch controls
-        isVertical
-            ? Padding(
-                padding: const EdgeInsets.symmetric(vertical: 32),
-                child: launchControls,
-              )
-            : Flexible(
-                flex: 2,
-                fit: FlexFit.tight,
-                child: Center(
-                  child: SingleChildScrollView(
-                    child: launchControls,
-                  ),
-                ),
-              ),
-        // Right side: Server status and Player list
-        isVertical
-            ? serverStatusCard
-            : Expanded(
-                flex: 1,
-                child: serverStatusCard,
-              ),
-      ],
-    );
+    final launchBlocked =
+        _controller.isLaunching ||
+        syncStatus.isActive ||
+        _controller.isGameRunning;
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF03273C),
+      appBar: JofTopBar(
+        title: 'JoF Launcher',
         leading: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Image.asset('assets/jof_logo.png'),
+          padding: const EdgeInsets.only(left: JofSpace.sm),
+          child: Image.asset(
+            'assets/jof_logo.png',
+            width: 36,
+            height: 36,
+            semanticLabel: 'JoF',
+          ),
         ),
-        title: const Text('JoF Launcher'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.inventory), // Icon for Assets
-            tooltip: 'Manage Assets',
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (context) => const AssetsView()),
-              );
-              _controller.checkAndSyncAssets();
-            },
+            icon: const Icon(Icons.inventory_2_outlined),
+            tooltip: 'Manage assets',
+            onPressed: _openAssets,
           ),
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.tune),
             tooltip: 'Settings',
             onPressed: () {
               Navigator.of(context).push(
@@ -417,13 +214,486 @@ class _HomeViewState extends State<HomeView> {
           ),
         ],
       ),
-      body: isVertical ? SingleChildScrollView(child: content) : content,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final playBox = _buildPlayBox(syncStatus, launchBlocked);
+          final assetsBox = _buildAssetsBox();
+
+          if (constraints.maxWidth < _twoColumnBreakpoint) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(JofSpace.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  playBox,
+                  const SizedBox(height: JofSpace.lg),
+                  assetsBox,
+                  const SizedBox(height: JofSpace.lg),
+                  _buildServerBox(expand: false),
+                ],
+              ),
+            );
+          }
+
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1440),
+              child: Padding(
+                padding: const EdgeInsets.all(JofSpace.lg),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            playBox,
+                            const SizedBox(height: JofSpace.lg),
+                            assetsBox,
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: JofSpace.lg),
+                    Expanded(child: _buildServerBox(expand: true)),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
       bottomNavigationBar: bottomStatusBars.isEmpty
           ? null
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              children: bottomStatusBars,
+          : Column(mainAxisSize: MainAxisSize.min, children: bottomStatusBars),
+    );
+  }
+
+  static const double _twoColumnBreakpoint = 900;
+
+  Future<void> _openAssets() async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => const AssetsView()));
+    _controller.checkAndSyncAssets();
+  }
+
+  Widget _buildPlayBox(SyncStatusService syncStatus, bool launchBlocked) {
+    // Without a verification pass (auto-process off) nothing is known about
+    // what is installed, so say so rather than claiming "Not installed".
+    final checked = _controller.cloudData != null;
+    final client =
+        _controller.selectedClientGroup?.name ??
+        (checked ? 'Not installed' : 'Not checked');
+    final mod =
+        _controller.selectedModGroup?.name ??
+        (checked ? 'None' : 'Not checked');
+
+    final String launchLabel;
+    final IconData launchIcon;
+    if (_controller.isGameRunning) {
+      launchLabel = 'Game running';
+      launchIcon = Icons.check;
+    } else if (_controller.isLaunching) {
+      launchLabel = 'Launching';
+      launchIcon = Icons.play_arrow;
+    } else {
+      launchLabel = 'Launch game';
+      launchIcon = Icons.play_arrow;
+    }
+
+    return JofBox(
+      title: 'Play',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: JofSpace.lg,
+            runSpacing: JofSpace.md,
+            children: [
+              _statSlot(JofStat.text(label: 'Client', value: client)),
+              _statSlot(JofStat.text(label: 'Mod', value: mod)),
+              _statSlot(
+                JofStat.text(
+                  label: 'Server',
+                  value: _controller.connectToPublic
+                      ? 'JoF public'
+                      : 'Main menu',
+                ),
+              ),
+            ],
+          ),
+          if (syncStatus.isActive) ...[
+            const SizedBox(height: JofSpace.xl),
+            const JofWell(
+              child: Row(
+                children: [
+                  Icon(Icons.sync, color: JofColors.warning),
+                  SizedBox(width: JofSpace.sm),
+                  Expanded(
+                    child: Text(
+                      'Files are syncing. You can launch once it finishes.',
+                    ),
+                  ),
+                ],
+              ),
             ),
+          ],
+          const SizedBox(height: JofSpace.xl),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: _LabeledCheckbox(
+                      label: 'Connect to public server',
+                      value: _controller.connectToPublic,
+                      onChanged: launchBlocked
+                          ? null
+                          : (value) => _controller.setConnectToPublic(value),
+                    ),
+                  ),
+                  const SizedBox(height: JofSpace.md),
+                  ElevatedButton.icon(
+                    onPressed: launchBlocked
+                        ? null
+                        : () => _controller.launchGame(context),
+                    icon: Icon(launchIcon, size: 28),
+                    label: Text(launchLabel.toUpperCase()),
+                    style: _heroButtonStyle,
+                  ),
+                  const SizedBox(height: JofSpace.md),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static final ButtonStyle _heroButtonStyle = ButtonStyle(
+    minimumSize: const WidgetStatePropertyAll(Size.fromHeight(64)),
+    shape: const WidgetStatePropertyAll(
+      RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(JofRadius.lg)),
+      ),
+    ),
+    textStyle: WidgetStatePropertyAll(
+      JofText.boxHeader.copyWith(
+        fontWeight: FontWeight.w600,
+        letterSpacing: 27.2 * 0.04,
+      ),
+    ),
+  );
+
+  Widget _statSlot(Widget stat) => ConstrainedBox(
+    constraints: const BoxConstraints(minWidth: 160),
+    child: stat,
+  );
+
+  Widget _buildAssetsBox() {
+    final installed = [
+      ..._controller.downloadedClientGroups,
+      ..._controller.downloadedModGroups,
+    ];
+
+    final Widget list;
+    if (_controller.cloudData == null) {
+      list = Padding(
+        padding: const EdgeInsets.symmetric(vertical: JofSpace.sm),
+        child: Text(
+          _controller.isCheckingAssets
+              ? 'Checking files…'
+              : 'Not checked yet. Open Manage assets to review your client '
+                    'and mods.',
+          style: const TextStyle(color: JofColors.textMuted),
+        ),
+      );
+    } else if (installed.isEmpty) {
+      list = const Padding(
+        padding: EdgeInsets.symmetric(vertical: JofSpace.sm),
+        child: Text(
+          'No client or mods installed yet.',
+          style: TextStyle(color: JofColors.textMuted),
+        ),
+      );
+    } else {
+      list = Column(
+        children: [
+          for (var i = 0; i < installed.length; i++)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: JofSpace.sm),
+              decoration: i == installed.length - 1
+                  ? null
+                  : const BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: JofColors.border,
+                          width: JofSpace.xxs,
+                        ),
+                      ),
+                    ),
+              child: Row(
+                children: [
+                  Expanded(child: Text(installed[i].name)),
+                  const JofStatus(
+                    icon: Icons.check,
+                    iconColor: JofColors.highlight,
+                    label: 'Installed',
+                    labelColor: JofColors.textMuted,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
+
+    return JofBox(
+      title: 'Assets',
+      padded: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          JofSpace.sm,
+          0,
+          JofSpace.sm,
+          JofSpace.sm,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            list,
+            const SizedBox(height: JofSpace.sm),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton(
+                onPressed: _openAssets,
+                child: const Text('MANAGE ASSETS'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildServerBox({required bool expand}) {
+    final data = _controller.trackerData;
+
+    final Widget status;
+    if (data == null) {
+      status = const Padding(
+        padding: EdgeInsets.all(JofSpace.md),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    } else {
+      status = Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: JofSpace.sm,
+          vertical: JofSpace.md,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: data.online ? JofColors.success : JofColors.danger,
+                    boxShadow: [
+                      BoxShadow(
+                        color: data.online
+                            ? JofColors.successRing
+                            : JofColors.dangerText,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: JofSpace.sm),
+                Text(
+                  data.online ? 'ONLINE' : 'OFFLINE',
+                  style: JofText.headingStrong,
+                ),
+              ],
+            ),
+            if (data.online) ...[
+              const SizedBox(height: JofSpace.md),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: JofStat.text(
+                      label: 'Map',
+                      value: data.map ?? 'Unknown',
+                    ),
+                  ),
+                  const SizedBox(width: JofSpace.lg),
+                  Expanded(
+                    child: JofStat.text(
+                      label: 'Players',
+                      value: '${data.clients} / ${data.maxClients}',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final players = data?.players ?? const <String>[];
+
+    Widget playerRow(int index) => Container(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      decoration: index == players.length - 1
+          ? null
+          : const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: JofColors.border,
+                  width: JofSpace.xxs,
+                ),
+              ),
+            ),
+      child: ColorTokenizedText(
+        text: players[index],
+        style: JofText.bodyMedium.copyWith(color: JofColors.text),
+      ),
+    );
+
+    final Widget playerList;
+    if (data == null) {
+      playerList = const SizedBox.shrink();
+    } else if (players.isEmpty) {
+      playerList = const Padding(
+        padding: EdgeInsets.all(JofSpace.md),
+        child: Text(
+          'No players online',
+          style: TextStyle(color: JofColors.textMuted),
+        ),
+      );
+    } else if (expand) {
+      playerList = ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: JofSpace.sm),
+        itemCount: players.length,
+        itemBuilder: (context, index) => playerRow(index),
+      );
+    } else {
+      playerList = Padding(
+        padding: const EdgeInsets.symmetric(horizontal: JofSpace.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [for (var i = 0; i < players.length; i++) playerRow(i)],
+        ),
+      );
+    }
+
+    return JofBox(
+      title: 'Server',
+      padded: false,
+      expand: expand,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh, size: 22),
+          tooltip: 'Refresh server status',
+          onPressed: () => _controller.refreshTrackerData(),
+        ),
+      ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          status,
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: JofSpace.sm,
+              vertical: JofSpace.xs,
+            ),
+            decoration: const BoxDecoration(
+              border: Border.symmetric(
+                horizontal: BorderSide(
+                  color: JofColors.border,
+                  width: JofSpace.xxs,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(child: Text('PLAYERS', style: JofText.statLabel)),
+                Container(
+                  constraints: const BoxConstraints(minWidth: 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: JofColors.surfaceRaised,
+                    borderRadius: BorderRadius.circular(JofRadius.xl),
+                  ),
+                  child: Text(
+                    '${players.length}',
+                    textAlign: TextAlign.center,
+                    style: JofText.caption.copyWith(height: 22 / 12.8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (expand) Expanded(child: playerList) else playerList,
+        ],
+      ),
+    );
+  }
+}
+
+/// A checkbox with a clickable label, sized to the 44px touch target.
+class _LabeledCheckbox extends StatelessWidget {
+  final String label;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  const _LabeledCheckbox({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onChanged != null;
+    return MergeSemantics(
+      child: InkWell(
+        onTap: enabled ? () => onChanged!(!value) : null,
+        borderRadius: BorderRadius.circular(JofRadius.sm),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: JofSpace.touchTarget),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(
+                value: value,
+                onChanged: enabled ? (v) => onChanged!(v ?? false) : null,
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: JofSpace.sm),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: enabled ? JofColors.text : JofColors.textDisabled,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -10,7 +10,7 @@ class JofStat extends StatelessWidget {
   const JofStat({super.key, required this.label, required this.value});
 
   JofStat.text({super.key, required this.label, required String value})
-      : value = Text(value);
+    : value = Text(value);
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +48,9 @@ class JofWell extends StatelessWidget {
     super.key,
     required this.child,
     this.padding = const EdgeInsets.symmetric(
-        horizontal: JofSpace.md, vertical: JofSpace.sm),
+      horizontal: JofSpace.md,
+      vertical: JofSpace.sm,
+    ),
   });
 
   @override
@@ -79,8 +81,8 @@ class JofTag extends StatelessWidget {
   });
 
   const JofTag.danger(this.label, {super.key})
-      : background = JofColors.danger,
-        foreground = JofColors.onDanger;
+    : background = JofColors.danger,
+      foreground = JofColors.onDanger;
 
   @override
   Widget build(BuildContext context) {
@@ -151,7 +153,8 @@ class JofTopBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final canPop = ModalRoute.of(context)?.canPop ?? false;
-    final lead = leading ??
+    final lead =
+        leading ??
         (canPop
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),

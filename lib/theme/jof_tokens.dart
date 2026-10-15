@@ -1,5 +1,3 @@
-import 'dart:ui' show FontVariation;
-
 import 'package:flutter/painting.dart';
 
 /// Colour tokens from the JoF design system (`project/ds/jof/tokens.json`).

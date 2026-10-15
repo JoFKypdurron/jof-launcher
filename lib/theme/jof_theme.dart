@@ -61,7 +61,8 @@ ThemeData buildJofTheme() {
   final buttonStyle = ButtonStyle(
     minimumSize: const WidgetStatePropertyAll(Size(64, JofSpace.touchTarget)),
     padding: const WidgetStatePropertyAll(
-        EdgeInsets.symmetric(horizontal: JofSpace.lg)),
+      EdgeInsets.symmetric(horizontal: JofSpace.lg),
+    ),
     shape: const WidgetStatePropertyAll(shape),
     elevation: const WidgetStatePropertyAll(0),
     textStyle: WidgetStatePropertyAll(JofText.buttonLabel),
@@ -99,7 +100,8 @@ ThemeData buildJofTheme() {
   final textButtonStyle = ButtonStyle(
     minimumSize: const WidgetStatePropertyAll(Size(64, JofSpace.touchTarget)),
     padding: const WidgetStatePropertyAll(
-        EdgeInsets.symmetric(horizontal: JofSpace.md)),
+      EdgeInsets.symmetric(horizontal: JofSpace.md),
+    ),
     shape: const WidgetStatePropertyAll(shape),
     textStyle: WidgetStatePropertyAll(JofText.buttonLabel),
     foregroundColor: WidgetStateProperty.resolveWith((states) {
@@ -112,7 +114,8 @@ ThemeData buildJofTheme() {
 
   final outlinedButtonStyle = buttonStyle.copyWith(
     side: const WidgetStatePropertyAll(
-        BorderSide(color: JofColors.highlight, width: 2)),
+      BorderSide(color: JofColors.highlight, width: 2),
+    ),
   );
 
   return base.copyWith(
@@ -149,7 +152,8 @@ ThemeData buildJofTheme() {
     iconButtonTheme: IconButtonThemeData(
       style: ButtonStyle(
         minimumSize: const WidgetStatePropertyAll(
-            Size(JofSpace.touchTarget, JofSpace.touchTarget)),
+          Size(JofSpace.touchTarget, JofSpace.touchTarget),
+        ),
         shape: const WidgetStatePropertyAll(shape),
         foregroundColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.disabled)) {
@@ -177,7 +181,8 @@ ThemeData buildJofTheme() {
     ),
     checkboxTheme: CheckboxThemeData(
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(3))),
+        borderRadius: BorderRadius.all(Radius.circular(3)),
+      ),
       side: WidgetStateBorderSide.resolveWith((states) {
         if (states.contains(WidgetState.disabled)) {
           return const BorderSide(color: JofColors.textDisabled, width: 2);
@@ -221,7 +226,9 @@ ThemeData buildJofTheme() {
       filled: true,
       fillColor: JofColors.surfaceInput,
       contentPadding: const EdgeInsets.symmetric(
-          horizontal: JofSpace.sm, vertical: 12),
+        horizontal: JofSpace.sm,
+        vertical: 12,
+      ),
       isDense: true,
       labelStyle: JofText.body.copyWith(color: JofColors.textMuted),
       floatingLabelStyle: JofText.body.copyWith(color: JofColors.textMuted),
@@ -232,9 +239,13 @@ ThemeData buildJofTheme() {
       errorStyle: JofText.caption.copyWith(color: JofColors.dangerText),
       errorMaxLines: 4,
       border: const OutlineInputBorder(
-          borderRadius: radius, borderSide: BorderSide.none),
+        borderRadius: radius,
+        borderSide: BorderSide.none,
+      ),
       enabledBorder: const OutlineInputBorder(
-          borderRadius: radius, borderSide: BorderSide.none),
+        borderRadius: radius,
+        borderSide: BorderSide.none,
+      ),
       focusedBorder: const OutlineInputBorder(
         borderRadius: radius,
         borderSide: BorderSide(color: JofColors.focusRing, width: 2),
@@ -248,7 +259,9 @@ ThemeData buildJofTheme() {
         borderSide: BorderSide(color: JofColors.danger, width: 2),
       ),
       disabledBorder: const OutlineInputBorder(
-          borderRadius: radius, borderSide: BorderSide.none),
+        borderRadius: radius,
+        borderSide: BorderSide.none,
+      ),
     ),
     dropdownMenuTheme: const DropdownMenuThemeData(
       menuStyle: MenuStyle(
@@ -305,7 +318,8 @@ ThemeData buildJofTheme() {
     ),
     scrollbarTheme: ScrollbarThemeData(
       thumbColor: WidgetStatePropertyAll(
-          JofColors.highlight.withValues(alpha: 0.4)),
+        JofColors.highlight.withValues(alpha: 0.4),
+      ),
       radius: const Radius.circular(JofRadius.sm),
     ),
   );

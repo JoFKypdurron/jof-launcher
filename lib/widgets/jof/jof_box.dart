@@ -31,7 +31,9 @@ class JofBox extends StatelessWidget {
     Widget body = padded
         ? Padding(
             padding: const EdgeInsets.symmetric(
-                horizontal: JofSpace.sm, vertical: JofSpace.md),
+              horizontal: JofSpace.sm,
+              vertical: JofSpace.md,
+            ),
             child: child,
           )
         : child;
@@ -72,7 +74,9 @@ class JofStripedHeader extends StatelessWidget {
       painter: const _StripePainter(),
       child: Padding(
         padding: EdgeInsets.only(
-            left: JofSpace.sm, right: actions.isEmpty ? JofSpace.sm : 0),
+          left: JofSpace.sm,
+          right: actions.isEmpty ? JofSpace.sm : 0,
+        ),
         child: Row(
           children: [
             Expanded(
