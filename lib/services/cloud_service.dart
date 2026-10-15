@@ -526,7 +526,10 @@ class CloudService {
   ///
   /// Shares one implementation with asset downloads so the launcher updater
   /// inherits the same resume, retry, connectivity-wait and integrity
-  /// behaviour rather than growing a second, less tested copy of it.
+  /// behaviour rather than growing a second, less tested copy of it. As the
+  /// only source for the file, a server that keeps serving the wrong file
+  /// (say a stale CDN copy of a different size) fails after
+  /// [_maxIntegrityFailures] instead of being re-downloaded forever.
   Future<void> downloadFile({
     required String url,
     required String finalPath,
@@ -544,6 +547,7 @@ class CloudService {
       onProgress: onProgress,
       onStatus: onStatus,
       isCancelled: isCancelled,
+      source: _SourceAttempt.only(_connectTimeout),
     );
   }
 
@@ -564,7 +568,7 @@ class CloudService {
     Function(double progress)? onProgress,
     void Function(String status)? onStatus,
     bool Function()? isCancelled,
-    _SourceAttempt? source,
+    required _SourceAttempt source,
   }) async {
     bool cancelled() => isCancelled?.call() ?? false;
 
@@ -581,7 +585,7 @@ class CloudService {
     // the retry loop below is otherwise unbounded. Without a ceiling, a file
     // whose published checksum simply never matches would re-download forever.
     // An asset download shares this budget across its sources.
-    final integrity = source?.integrity ?? _IntegrityBudget();
+    final integrity = source.integrity;
     // Retryable failures while online. Only bounded for a source with a
     // fallback; otherwise the loop keeps retrying as before.
     var networkFailures = 0;
@@ -605,7 +609,7 @@ class CloudService {
 
         final response = await client
             .send(request)
-            .timeout(source?.connectTimeout ?? _connectTimeout);
+            .timeout(source.connectTimeout);
 
         int total;
         bool append;
@@ -620,7 +624,7 @@ class CloudService {
           append = false;
           offset = 0;
           total = expectedSize ?? response.contentLength ?? 0;
-        } else if (response.statusCode == 416) {
+        } else if (response.statusCode == 416 && offset > 0) {
           // Our partial is stale/too big for the current file: restart clean.
           if (await partFile.exists()) await partFile.delete();
           client.close();
@@ -628,7 +632,7 @@ class CloudService {
         } else {
           // A real HTTP error (404/5xx/...) is not a connectivity problem;
           // fail fast rather than retrying forever.
-          if (source != null && source.canFallBack) {
+          if (source.canFallBack) {
             throw _SourceUnusableException('HTTP ${response.statusCode}',
                 sourceDown: response.statusCode >= 500);
           }
@@ -639,13 +643,11 @@ class CloudService {
         final declaredTotal = response.statusCode == 206
             ? _totalFromContentRange(response)
             : response.contentLength;
-        if (source != null) {
-          final mismatch = _contentMismatch(
-              response, declaredTotal, expectedSize, finalPath);
-          if (mismatch != null) {
-            if (await partFile.exists()) await partFile.delete();
-            _rejectContent(source, mismatch, url, bodyDownloaded: false);
-          }
+        final mismatch =
+            _contentMismatch(response, declaredTotal, expectedSize, finalPath);
+        if (mismatch != null) {
+          if (await partFile.exists()) await partFile.delete();
+          _rejectContent(source, mismatch, url, bodyDownloaded: false);
         }
 
         sink = await partFile.open(
@@ -684,7 +686,7 @@ class CloudService {
         final checkSize = expectedSize ?? (total > 0 ? total : null);
         final finalLength = await partFile.length();
         if (checkSize != null && finalLength != checkSize) {
-          if (source != null && declaredTotal == null && expectedSize != null) {
+          if (declaredTotal == null && expectedSize != null) {
             // The body ended cleanly without a declared size, so this is the
             // whole of a wrong file rather than a truncated transfer.
             await partFile.delete();
@@ -704,7 +706,7 @@ class CloudService {
             await partFile.delete();
             integrity.failures++;
             _failFastOnRepeatedCorruption(integrity.failures, 'MD5', url);
-            if (source != null && source.canFallBack) {
+            if (source.canFallBack) {
               throw const _SourceUnusableException('MD5 mismatch');
             }
             throw const _RetryableDownloadException('hash mismatch');
@@ -754,9 +756,8 @@ class CloudService {
           await _connectivity.waitForConnection(isCancelled: cancelled);
         } else {
           networkFailures++;
-          final limit = source?.maxNetworkFailures;
-          if (source != null &&
-              source.canFallBack &&
+          final limit = source.maxNetworkFailures;
+          if (source.canFallBack &&
               limit != null &&
               networkFailures >= limit) {
             // Never resume these bytes from another source: the copies
@@ -1082,6 +1083,7 @@ class CloudService {
             onProgress?.call('Downloading $platformName files', p * 0.5),
         onStatus: onStatus,
         isCancelled: isCancelled,
+        source: _SourceAttempt.only(_connectTimeout),
       );
 
       onProgress?.call('Extracting $platformName files', 0.5);
@@ -1239,7 +1241,7 @@ class _IntegrityBudget {
   int failures = 0;
 }
 
-/// How an asset download treats the source it is currently using.
+/// How a download treats the source it is currently using.
 class _SourceAttempt {
   final _IntegrityBudget integrity;
 
@@ -1259,4 +1261,11 @@ class _SourceAttempt {
     required this.maxNetworkFailures,
     required this.connectTimeout,
   });
+
+  /// The only source for a file: network errors keep retrying, and content
+  /// that is not the expected file uses up a fresh integrity budget.
+  _SourceAttempt.only(this.connectTimeout)
+      : integrity = _IntegrityBudget(),
+        canFallBack = false,
+        maxNetworkFailures = null;
 }
