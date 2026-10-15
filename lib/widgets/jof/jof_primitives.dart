@@ -55,14 +55,14 @@ class JofWell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: JofColors.shade,
+    // A Material for the same reason as JofBox: it hosts list tiles.
+    return Material(
+      color: JofColors.shade,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(JofRadius.sm),
-        border: Border.all(color: JofShadows.insetEdge),
+        side: const BorderSide(color: JofShadows.insetEdge),
       ),
-      child: child,
+      child: Padding(padding: padding, child: child),
     );
   }
 }

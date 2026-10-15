@@ -39,10 +39,12 @@ class JofBox extends StatelessWidget {
         : child;
     if (expand) body = Expanded(child: body);
 
-    return Container(
+    // A Material rather than a decorated box, so list tiles inside paint
+    // their ink on it instead of underneath it.
+    return Material(
+      color: JofColors.surface,
       clipBehavior: Clip.antiAlias,
-      decoration: const BoxDecoration(
-        color: JofColors.surface,
+      shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(JofRadius.sm)),
       ),
       child: Column(
