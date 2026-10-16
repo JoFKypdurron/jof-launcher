@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:path/path.dart' as p;
 
@@ -14,7 +15,17 @@ class SyncManager {
   static const String _stagingContentDirName = 'content';
   static const String _stagingManifestFileName = 'manifest.json';
 
-  SyncManager(this.cloudService);
+  /// Assets downloaded at once. Most are a few MB, where a sequential sync
+  /// spends much of its time per file rather than per byte: connecting, and
+  /// a CDN edge fetching a file it has not cached yet. Parallel files hide
+  /// that latency.
+  final int downloadConcurrency;
+
+  /// Minimum interval between aggregate progress reports.
+  static const Duration _progressInterval = Duration(milliseconds: 100);
+
+  SyncManager(this.cloudService, {this.downloadConcurrency = 4})
+      : assert(downloadConcurrency > 0);
 
   Future<String?> _detectExistingBaseFolderName(String gameDataPath) async {
     final lower = Directory(p.join(gameDataPath, 'base'));
@@ -124,20 +135,18 @@ class SyncManager {
     final downloads = List<dynamic>.from((manifest['downloads'] as List?) ?? const []);
     final deletes = List<dynamic>.from((manifest['deletes'] as List?) ?? const []);
 
-    for (final asset in toDownload) {
-      if (_isCancelled) break;
-      onProgress('Staging ${asset.name}', 0);
-      await cloudService.downloadAsset(
-        asset,
-        stagingContentRoot,
-        onProgress: (progress) => onProgress('Staging ${asset.name}', progress),
-        onStatus: onStatus,
-        isCancelled: () => _isCancelled,
-      );
-      downloads.add({'id': asset.id, 'name': asset.name, 'targetFolder': asset.targetFolder});
-      onStatusUpdate(asset.id, AssetStatus.stagedDownloaded);
-      onQueueProgress?.call(++completed, total);
-    }
+    await _downloadAll(
+      toDownload,
+      stagingContentRoot,
+      label: (name) => 'Staging $name',
+      onProgress: onProgress,
+      onStatus: onStatus,
+      onDownloaded: (asset) {
+        downloads.add({'id': asset.id, 'name': asset.name, 'targetFolder': asset.targetFolder});
+        onStatusUpdate(asset.id, AssetStatus.stagedDownloaded);
+        onQueueProgress?.call(++completed, total);
+      },
+    );
 
     for (final asset in toDelete) {
       if (_isCancelled) break;
@@ -302,6 +311,87 @@ class SyncManager {
     }
   }
 
+  /// Downloads [assets] into [downloadDir], [downloadConcurrency] at a time.
+  ///
+  /// Progress is reported for the whole batch, weighted by size, under the
+  /// name of the oldest file still downloading. The first failure stops the
+  /// remaining downloads and is rethrown once they have wound down.
+  Future<void> _downloadAll(
+    List<Asset> assets,
+    String downloadDir, {
+    required String Function(String name) label,
+    required Function(String name, double progress) onProgress,
+    required void Function(Asset asset) onDownloaded,
+    void Function(String status)? onStatus,
+  }) async {
+    // Largest first, so a big file does not end up downloading on its own
+    // after everything else has finished.
+    final queue = [...assets]..sort((a, b) => b.size.compareTo(a.size));
+    int weight(Asset asset) => math.max(asset.size, 1);
+    final totalBytes = queue.fold<int>(0, (sum, a) => sum + weight(a));
+
+    var next = 0;
+    var doneBytes = 0;
+    // Insertion-ordered, so the first entry is the oldest download.
+    final inFlight = <Asset, double>{};
+    final sinceReport = Stopwatch()..start();
+    Object? failure;
+    StackTrace? failureStack;
+    bool stopped() => _isCancelled || failure != null;
+
+    /// [finished] names the report when it is the last file to complete.
+    void report({bool force = false, Asset? finished}) {
+      if (inFlight.isEmpty && finished == null) return;
+      if (!force && sinceReport.elapsed < _progressInterval) return;
+      sinceReport.reset();
+      var bytes = doneBytes.toDouble();
+      inFlight.forEach((asset, progress) => bytes += weight(asset) * progress);
+      final others = math.max(inFlight.length - 1, 0);
+      final name = (inFlight.keys.firstOrNull ?? finished)!.name;
+      onProgress(
+        label(others > 0 ? '$name and $others more' : name),
+        (bytes / totalBytes).clamp(0.0, 1.0),
+      );
+    }
+
+    Future<void> worker() async {
+      while (!stopped() && next < queue.length) {
+        final asset = queue[next++];
+        inFlight[asset] = 0;
+        report(force: true);
+        try {
+          await cloudService.downloadAsset(
+            asset,
+            downloadDir,
+            onProgress: (progress) {
+              inFlight[asset] = progress;
+              report();
+            },
+            onStatus: onStatus,
+            isCancelled: stopped,
+          );
+        } catch (e, st) {
+          inFlight.remove(asset);
+          if (failure == null) {
+            failure = e;
+            failureStack = st;
+          }
+          return;
+        }
+        inFlight.remove(asset);
+        doneBytes += weight(asset);
+        onDownloaded(asset);
+        report(force: true, finished: asset);
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < math.min(downloadConcurrency, queue.length); i++)
+        worker(),
+    ]);
+    if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
+  }
+
   Future<void> syncAssets({
     required List<Asset> toDownload,
     required List<Asset> toDelete,
@@ -350,23 +440,17 @@ class SyncManager {
     }
 
     // 2. Download assets that are selected and missing/outdated
-    for (var asset in toDownload) {
-      if (_isCancelled) break;
-      onProgress(asset.name, 0);
-      
-      await cloudService.downloadAsset(
-        asset,
-        gameDataPath,
-        onProgress: (progress) {
-          onProgress(asset.name, progress);
-        },
-        onStatus: onStatus,
-        isCancelled: () => _isCancelled,
-      );
-
-      onStatusUpdate(asset.id, AssetStatus.downloaded);
-      onQueueProgress?.call(++completed, total);
-    }
+    await _downloadAll(
+      toDownload,
+      gameDataPath,
+      label: (name) => name,
+      onProgress: onProgress,
+      onStatus: onStatus,
+      onDownloaded: (asset) {
+        onStatusUpdate(asset.id, AssetStatus.downloaded);
+        onQueueProgress?.call(++completed, total);
+      },
+    );
 
     // 3. Install the game client, skipped when already current
     if (!_isCancelled && cloudService.supportsClientFiles) {
