@@ -273,13 +273,6 @@ class CloudService {
     return digest.toString();
   }
 
-  /// Streams a SHA-256 of [file]. Used for GitHub release assets, whose
-  /// published digests are sha256 rather than the MD5 the jofhub manifest uses.
-  Future<String> _calculateFileSha256(io.File file) async {
-    final digest = await sha256.bind(file.openRead()).first;
-    return digest.toString();
-  }
-
   /// Fetches and parses the cloud manifest from the configured
   /// [RepositorySource]. Under `auto` the mirror is tried first with a short
   /// timeout, and any failure (network, non-2xx, invalid JSON, status not OK)
@@ -643,6 +636,17 @@ class CloudService {
           _rejectContent(source, mismatch, url, bodyDownloaded: false);
         }
 
+        // Digests are computed as the bytes arrive, so a finished file is not
+        // read back from disk to verify it. A resumed download first feeds
+        // the bytes already on disk.
+        final hashers = _StreamingHashers(
+          md5: expectedHash != null && expectedHash.isNotEmpty,
+          sha256: expectedSha256 != null && expectedSha256.isNotEmpty,
+        );
+        if (append && hashers.isNotEmpty) {
+          await partFile.openRead().forEach(hashers.add);
+        }
+
         sink = await partFile.open(
           mode: append ? io.FileMode.append : io.FileMode.write,
         );
@@ -653,6 +657,7 @@ class CloudService {
           if (cancelled()) {
             throw Exception('Download cancelled');
           }
+          hashers.add(chunk);
           buffer.add(chunk);
           received += chunk.length;
           if (buffer.length >= _writeBufferSize) {
@@ -693,8 +698,9 @@ class CloudService {
           }
           throw const _RetryableDownloadException('incomplete download');
         }
+        hashers.close();
         if (expectedHash != null && expectedHash.isNotEmpty) {
-          final actualHash = await _calculateFileHash(partFile);
+          final actualHash = hashers.md5Digest.toString();
           if (actualHash != expectedHash) {
             await partFile.delete();
             integrity.failures++;
@@ -706,7 +712,7 @@ class CloudService {
           }
         }
         if (expectedSha256 != null && expectedSha256.isNotEmpty) {
-          final actualSha256 = await _calculateFileSha256(partFile);
+          final actualSha256 = hashers.sha256Digest.toString();
           if (actualSha256.toLowerCase() != expectedSha256.toLowerCase()) {
             await partFile.delete();
             integrity.failures++;
@@ -1333,6 +1339,51 @@ class _SourceUnusableException implements Exception {
 
   @override
   String toString() => 'SourceUnusableException: $reason';
+}
+
+/// MD5 and/or SHA-256 of a download, fed chunk by chunk.
+class _StreamingHashers {
+  final _DigestSink? _md5Out;
+  final _DigestSink? _sha256Out;
+  final ByteConversionSink? _md5In;
+  final ByteConversionSink? _sha256In;
+
+  factory _StreamingHashers({required bool md5, required bool sha256}) {
+    final md5Out = md5 ? _DigestSink() : null;
+    final sha256Out = sha256 ? _DigestSink() : null;
+    return _StreamingHashers._(md5Out, sha256Out);
+  }
+
+  _StreamingHashers._(this._md5Out, this._sha256Out)
+      : _md5In = _md5Out == null ? null : md5.startChunkedConversion(_md5Out),
+        _sha256In = _sha256Out == null
+            ? null
+            : sha256.startChunkedConversion(_sha256Out);
+
+  bool get isNotEmpty => _md5In != null || _sha256In != null;
+
+  void add(List<int> chunk) {
+    _md5In?.add(chunk);
+    _sha256In?.add(chunk);
+  }
+
+  void close() {
+    _md5In?.close();
+    _sha256In?.close();
+  }
+
+  Digest get md5Digest => _md5Out!.value!;
+  Digest get sha256Digest => _sha256Out!.value!;
+}
+
+class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
 }
 
 /// Integrity failures for one file, shared across the sources it is tried on.
