@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
-import 'dart:io' as io show Directory, File, SecurityContext, Process, FileSystemEntity, FileSystemEntityType, Platform, Request, BadCertificateCallback, IOSink, FileMode, FileSystemException, RandomAccessFile, SocketException, HttpException;
+import 'dart:io' as io show Directory, File, SecurityContext, Process, FileSystemEntity, FileSystemEntityType, Platform, Request, BadCertificateCallback, IOSink, FileMode, FileSystemException, SocketException, HttpException;
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/asset.dart';
@@ -583,102 +584,44 @@ class CloudService {
 
       var offset = await partFile.exists() ? await partFile.length() : 0;
 
-      http.Client? client;
-      io.RandomAccessFile? sink;
-      final buffer = BytesBuilder(copy: false);
       try {
-        client = _createHttpClient();
-        final request = http.Request('GET', Uri.parse(url));
-        if (offset > 0) {
-          request.headers['Range'] = 'bytes=$offset-';
-        }
+        final result = await _transfer(
+          _TransferRequest(
+            url: url,
+            partPath: partFile.path,
+            finalPath: finalPath,
+            offset: offset,
+            expectedSize: expectedSize,
+            md5: expectedHash != null && expectedHash.isNotEmpty,
+            sha256: expectedSha256 != null && expectedSha256.isNotEmpty,
+            connectTimeout: source.connectTimeout,
+          ),
+          onProgress: (received, total) =>
+              onProgress?.call((received / total).clamp(0.0, 1.0)),
+          isCancelled: cancelled,
+        );
 
-        final response = await client
-            .send(request)
-            .timeout(source.connectTimeout);
-
-        int total;
-        bool append;
-        if (response.statusCode == 206) {
-          append = true;
-          total = _totalFromContentRange(response) ??
-              expectedSize ??
-              ((response.contentLength ?? 0) + offset);
-        } else if (response.statusCode == 200) {
-          // Server ignored the Range request (or this is a fresh download):
-          // restart from the beginning.
-          append = false;
-          offset = 0;
-          total = expectedSize ?? response.contentLength ?? 0;
-        } else if (response.statusCode == 416 && offset > 0) {
+        final statusCode = result.statusCode;
+        if (statusCode == 416 && offset > 0) {
           // Our partial is stale/too big for the current file: restart clean.
           if (await partFile.exists()) await partFile.delete();
-          client.close();
           continue;
-        } else {
+        } else if (statusCode != 200 && statusCode != 206) {
           // A real HTTP error (404/5xx/...) is not a connectivity problem;
           // fail fast rather than retrying forever.
           if (source.canFallBack) {
-            throw _SourceUnusableException('HTTP ${response.statusCode}',
-                sourceDown: response.statusCode >= 500);
+            throw _SourceUnusableException('HTTP $statusCode',
+                sourceDown: statusCode >= 500);
           }
-          throw Exception('Failed to download asset: ${response.statusCode}');
+          throw Exception('Failed to download asset: $statusCode');
         }
-
-        // The size of the whole file as the server declares it.
-        final declaredTotal = response.statusCode == 206
-            ? _totalFromContentRange(response)
-            : response.contentLength;
-        final mismatch =
-            _contentMismatch(response, declaredTotal, expectedSize, finalPath);
+        final mismatch = result.mismatch;
         if (mismatch != null) {
           if (await partFile.exists()) await partFile.delete();
           _rejectContent(source, mismatch, url, bodyDownloaded: false);
         }
-
-        // Digests are computed as the bytes arrive, so a finished file is not
-        // read back from disk to verify it. A resumed download first feeds
-        // the bytes already on disk.
-        final hashers = _StreamingHashers(
-          md5: expectedHash != null && expectedHash.isNotEmpty,
-          sha256: expectedSha256 != null && expectedSha256.isNotEmpty,
-        );
-        if (append && hashers.isNotEmpty) {
-          await partFile.openRead().forEach(hashers.add);
-        }
-
-        sink = await partFile.open(
-          mode: append ? io.FileMode.append : io.FileMode.write,
-        );
-        var received = offset;
-        final sinceProgress = Stopwatch()..start();
-
-        await for (final chunk in response.stream.timeout(_idleTimeout)) {
-          if (cancelled()) {
-            throw Exception('Download cancelled');
-          }
-          hashers.add(chunk);
-          buffer.add(chunk);
-          received += chunk.length;
-          if (buffer.length >= _writeBufferSize) {
-            await sink.writeFrom(buffer.takeBytes());
-          }
-          if (total > 0 && sinceProgress.elapsed >= _progressInterval) {
-            sinceProgress.reset();
-            onProgress?.call((received / total).clamp(0.0, 1.0));
-          }
-        }
-
-        if (buffer.isNotEmpty) {
-          await sink.writeFrom(buffer.takeBytes());
-        }
-        await sink.close();
-        if (total > 0) {
-          onProgress?.call((received / total).clamp(0.0, 1.0));
-        }
-        sink = null;
-        client.close();
-        client = null;
+        final total = result.total;
+        final declaredTotal = result.declaredTotal;
 
         // Verify what landed on disk before committing it.
         final checkSize = expectedSize ?? (total > 0 ? total : null);
@@ -698,9 +641,8 @@ class CloudService {
           }
           throw const _RetryableDownloadException('incomplete download');
         }
-        hashers.close();
         if (expectedHash != null && expectedHash.isNotEmpty) {
-          final actualHash = hashers.md5Digest.toString();
+          final actualHash = result.md5;
           if (actualHash != expectedHash) {
             await partFile.delete();
             integrity.failures++;
@@ -712,7 +654,7 @@ class CloudService {
           }
         }
         if (expectedSha256 != null && expectedSha256.isNotEmpty) {
-          final actualSha256 = hashers.sha256Digest.toString();
+          final actualSha256 = result.sha256!;
           if (actualSha256.toLowerCase() != expectedSha256.toLowerCase()) {
             await partFile.delete();
             integrity.failures++;
@@ -724,15 +666,6 @@ class CloudService {
         await _movePartIntoPlace(partFile, finalPath);
         return;
       } catch (e) {
-        try {
-          // Persist bytes already received so the resume continues from them.
-          if (sink != null && buffer.isNotEmpty) {
-            await sink.writeFrom(buffer.takeBytes());
-          }
-          await sink?.close();
-        } catch (_) {}
-        client?.close();
-
         if (_isCancellation(e)) {
           try {
             if (await partFile.exists()) await partFile.delete();
@@ -775,9 +708,190 @@ class CloudService {
     }
   }
 
+  /// Runs one attempt of a download: the request, the header checks, and
+  /// streaming the body into the part file.
+  ///
+  /// In the app this runs in a background isolate. Newer Flutter engines run
+  /// the root isolate on the platform thread, where on Linux a socket is only
+  /// read when the GTK main loop gets round to it: about 1 MB/s against
+  /// 60-100 MB/s on a thread of its own. An injected [_httpClientFactory]
+  /// (tests) keeps it inline, since a fake client cannot cross isolates.
+  Future<_TransferResult> _transfer(
+    _TransferRequest request, {
+    required void Function(int received, int total) onProgress,
+    required bool Function() isCancelled,
+  }) async {
+    final factory = _httpClientFactory;
+    if (factory != null) {
+      final client = factory();
+      try {
+        return await _runTransfer(request,
+            client: client, onProgress: onProgress, isCancelled: isCancelled);
+      } finally {
+        client.close();
+      }
+    }
+
+    final events = ReceivePort();
+    SendPort? control;
+    final subscription = events.listen((message) {
+      if (message is SendPort) {
+        control = message;
+      } else if (message is List) {
+        onProgress(message[0] as int, message[1] as int);
+      }
+    });
+    final cancelPoll = Timer.periodic(_progressInterval, (_) {
+      if (isCancelled()) control?.send(true);
+    });
+    try {
+      return await _spawnTransfer(request, events.sendPort);
+    } finally {
+      cancelPoll.cancel();
+      await subscription.cancel();
+      events.close();
+    }
+  }
+
+  /// Kept out of [_transfer] so the closure sent to the isolate captures only
+  /// [request] and [events], not the caller's callbacks.
+  static Future<_TransferResult> _spawnTransfer(
+      _TransferRequest request, SendPort events) {
+    return Isolate.run(() => _transferIsolateMain(request, events),
+        debugName: 'download');
+  }
+
+  static Future<_TransferResult> _transferIsolateMain(
+      _TransferRequest request, SendPort events) async {
+    final client =
+        createSecureHttpClient(connectionTimeout: request.connectTimeout);
+    final control = ReceivePort();
+    var cancelled = false;
+    control.listen((_) {
+      cancelled = true;
+      // Aborts a request or body that is waiting on a stalled server, rather
+      // than noticing the cancel only when the next chunk arrives.
+      client.close();
+    });
+    events.send(control.sendPort);
+    try {
+      return await _runTransfer(
+        request,
+        client: client,
+        onProgress: (received, total) => events.send([received, total]),
+        isCancelled: () => cancelled,
+      );
+    } finally {
+      client.close();
+      control.close();
+    }
+  }
+
+  static Future<_TransferResult> _runTransfer(
+    _TransferRequest request, {
+    required http.Client client,
+    required void Function(int received, int total) onProgress,
+    required bool Function() isCancelled,
+  }) async {
+    final partFile = io.File(request.partPath);
+    var offset = request.offset;
+    final expectedSize = request.expectedSize;
+
+    final httpRequest = http.Request('GET', Uri.parse(request.url));
+    if (offset > 0) {
+      httpRequest.headers['Range'] = 'bytes=$offset-';
+    }
+    final http.StreamedResponse response;
+    try {
+      response =
+          await client.send(httpRequest).timeout(request.connectTimeout);
+    } catch (_) {
+      if (isCancelled()) throw Exception('Download cancelled');
+      rethrow;
+    }
+
+    int total;
+    bool append;
+    if (response.statusCode == 206) {
+      append = true;
+      total = _totalFromContentRange(response) ??
+          expectedSize ??
+          ((response.contentLength ?? 0) + offset);
+    } else if (response.statusCode == 200) {
+      // Server ignored the Range request (or this is a fresh download):
+      // restart from the beginning.
+      append = false;
+      offset = 0;
+      total = expectedSize ?? response.contentLength ?? 0;
+    } else {
+      return _TransferResult.status(response.statusCode);
+    }
+
+    // The size of the whole file as the server declares it.
+    final declaredTotal = response.statusCode == 206
+        ? _totalFromContentRange(response)
+        : response.contentLength;
+    final mismatch = _contentMismatch(
+        response, declaredTotal, expectedSize, request.finalPath);
+    if (mismatch != null) {
+      return _TransferResult.status(response.statusCode, mismatch: mismatch);
+    }
+
+    // Digests are computed as the bytes arrive, so a finished file is not
+    // read back from disk to verify it. A resumed download first feeds the
+    // bytes already on disk.
+    final hashers = _StreamingHashers(md5: request.md5, sha256: request.sha256);
+    if (append && hashers.isNotEmpty) {
+      await partFile.openRead().forEach(hashers.add);
+    }
+
+    final sink = await partFile.open(
+      mode: append ? io.FileMode.append : io.FileMode.write,
+    );
+    final buffer = BytesBuilder(copy: false);
+    var received = offset;
+    final sinceProgress = Stopwatch()..start();
+    try {
+      await for (final chunk in response.stream.timeout(_idleTimeout)) {
+        if (isCancelled()) {
+          throw Exception('Download cancelled');
+        }
+        hashers.add(chunk);
+        buffer.add(chunk);
+        received += chunk.length;
+        if (buffer.length >= _writeBufferSize) {
+          await sink.writeFrom(buffer.takeBytes());
+        }
+        if (total > 0 && sinceProgress.elapsed >= _progressInterval) {
+          sinceProgress.reset();
+          onProgress(received, total);
+        }
+      }
+    } catch (_) {
+      if (isCancelled()) throw Exception('Download cancelled');
+      rethrow;
+    } finally {
+      // Persist bytes already received, so a retry resumes from them.
+      try {
+        if (buffer.isNotEmpty) await sink.writeFrom(buffer.takeBytes());
+        await sink.close();
+      } catch (_) {}
+    }
+    if (total > 0) onProgress(received, total);
+
+    hashers.close();
+    return _TransferResult(
+      statusCode: response.statusCode,
+      total: total,
+      declaredTotal: declaredTotal,
+      md5: request.md5 ? hashers.md5Digest.toString() : null,
+      sha256: request.sha256 ? hashers.sha256Digest.toString() : null,
+    );
+  }
+
   /// Parses the total size out of a `Content-Range: bytes start-end/total`
   /// header, or null if unavailable.
-  int? _totalFromContentRange(http.StreamedResponse response) {
+  static int? _totalFromContentRange(http.StreamedResponse response) {
     final header = response.headers['content-range'];
     if (header == null) return null;
     final slash = header.lastIndexOf('/');
@@ -1339,6 +1453,66 @@ class _SourceUnusableException implements Exception {
 
   @override
   String toString() => 'SourceUnusableException: $reason';
+}
+
+/// What one download attempt needs. Plain data, so it can be sent to the
+/// isolate that runs the transfer.
+class _TransferRequest {
+  final String url;
+  final String partPath;
+
+  /// The eventual file name, for judging the content type against.
+  final String finalPath;
+
+  /// Bytes already in the part file, requested with a `Range` header.
+  final int offset;
+  final int? expectedSize;
+  final bool md5;
+  final bool sha256;
+  final Duration connectTimeout;
+
+  const _TransferRequest({
+    required this.url,
+    required this.partPath,
+    required this.finalPath,
+    required this.offset,
+    required this.expectedSize,
+    required this.md5,
+    required this.sha256,
+    required this.connectTimeout,
+  });
+}
+
+/// How one download attempt ended, short of an exception.
+class _TransferResult {
+  final int statusCode;
+
+  /// Why the response cannot be the expected file, judged from its headers.
+  /// Nothing was written when set.
+  final String? mismatch;
+
+  /// The size the file should end up, or 0 when unknown.
+  final int total;
+
+  /// The size of the whole file as the server declared it.
+  final int? declaredTotal;
+  final String? md5;
+  final String? sha256;
+
+  const _TransferResult({
+    required this.statusCode,
+    required this.total,
+    required this.declaredTotal,
+    this.md5,
+    this.sha256,
+  }) : mismatch = null;
+
+  /// A response whose body was not downloaded: an HTTP error, or [mismatch].
+  const _TransferResult.status(this.statusCode, {this.mismatch})
+      : total = 0,
+        declaredTotal = null,
+        md5 = null,
+        sha256 = null;
 }
 
 /// MD5 and/or SHA-256 of a download, fed chunk by chunk.
